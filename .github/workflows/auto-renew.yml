@@ -1,9 +1,9 @@
-name: Weirdhost Auto Renew
+name: Weirdhost Auto Renew (CF Bypass)
 
 on:
   schedule:
-    - cron: '0 15 * * *'  # 每天 UTC 15:00（北京时间 23:00）
-  workflow_dispatch:     # 允许手动触发
+    - cron: '0 15 * * *'   # 每天 UTC 15:00（北京时间 23:00）
+  workflow_dispatch:
 
 # 🚦 并发锁：防止多个 job 同时 push main
 concurrency:
@@ -11,44 +11,88 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  login-test:
+  renew:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
 
+    # ✅ 必须：允许写仓库（README / time.txt）
     permissions:
       contents: write
 
     steps:
+    # -------------------------------------------------
+    # 1️⃣ 拉代码
+    # -------------------------------------------------
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        fetch-depth: 0   # 必须，rebase 需要完整历史
+        fetch-depth: 0
 
+    # -------------------------------------------------
+    # 2️⃣ Python
+    # -------------------------------------------------
     - name: Setup Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
 
-    - name: Install dependencies
+    # -------------------------------------------------
+    # 3️⃣ 系统依赖（⚠️ CF / Chromium 必要）
+    # -------------------------------------------------
+    - name: Install system dependencies
       run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libnss3 \
+          libatk1.0-0 \
+          libatk-bridge2.0-0 \
+          libcups2 \
+          libdrm2 \
+          libxkbcommon0 \
+          libxcomposite1 \
+          libxrandr2 \
+          libxdamage1 \
+          libgbm1 \
+          libasound2 \
+          libpangocairo-1.0-0 \
+          libgtk-3-0 \
+          fonts-liberation \
+          xdg-utils
+
+    # -------------------------------------------------
+    # 4️⃣ Python 依赖
+    # -------------------------------------------------
+    - name: Install Python dependencies
+      run: |
+        pip install --upgrade pip
         pip install playwright
         playwright install chromium
 
+    # -------------------------------------------------
+    # 5️⃣ Cloudflare WARP（降低 CF 风控）
+    # -------------------------------------------------
     - name: Set up WARP
       uses: fscarmen/warp-on-actions@v1.4
       with:
         stack: dual
         mode: wireguard
 
-    - name: Run auto renewal
+    # -------------------------------------------------
+    # 6️⃣ 执行续期（已集成 CF bypass）
+    # -------------------------------------------------
+    - name: Run Weirdhost auto renew (CF bypass)
       env:
         REMEMBER_WEB_COOKIE: ${{ secrets.REMEMBER_WEB_COOKIE }}
         WEIRDHOST_EMAIL: ${{ secrets.WEIRDHOST_EMAIL }}
         WEIRDHOST_PASSWORD: ${{ secrets.WEIRDHOST_PASSWORD }}
         WEIRDHOST_SERVER_URLS: ${{ secrets.WEIRDHOST_SERVER_URLS }}
+        HEADLESS: "true"
       run: |
-        python main.py
+        python renew.py
 
+    # -------------------------------------------------
+    # 7️⃣ Commit README（你原来的逻辑，保留）
+    # -------------------------------------------------
     - name: Commit README file
       run: |
         set -e
@@ -63,10 +107,8 @@ jobs:
           exit 0
         fi
 
-        git commit -m "📝 自动续期运行成功: $(date +'%Y-%m-%d %H:%M:%S')"
+        git commit -m "📝 Weirdhost 自动续期完成: $(date +'%Y-%m-%d %H:%M:%S')"
 
-        # 🔑 同步远端，防止非 fast-forward
         git fetch origin
         git pull --rebase origin main
-
         git push origin HEAD:main
