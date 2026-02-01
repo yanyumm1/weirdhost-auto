@@ -88,7 +88,7 @@ class WeirdhostAuto:
             "body": None
         }
 
-        # -------- Network 监听（核心）--------
+        # -------- Network 监听 --------
         def on_response(resp):
             url = resp.url
             if any(k in url for k in ["renew", "extend", "time", "additional"]):
@@ -114,10 +114,10 @@ class WeirdhostAuto:
                 self.log("❌ 未找到续期按钮", "ERROR")
                 return "no_renew_button"
 
-            # ---------------- 点击按钮（JS 触发，确保 Ajax 发起） ----------------
+            # ---------------- 点击按钮（force=True，确保触发 JS Ajax） ----------------
             button.scroll_into_view_if_needed()
             time.sleep(0.5)
-            page.evaluate("(b) => b.click()", button)
+            button.click(force=True)
 
             # CF 判定
             if not self.wait_cf_turnstile(page, server_id):
