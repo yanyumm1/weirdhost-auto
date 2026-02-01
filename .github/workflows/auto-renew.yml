@@ -2,82 +2,45 @@ name: Weirdhost Auto Renew
 
 on:
   schedule:
-    - cron: "0 15 * * *"   # 每天 UTC 15:00（北京时间 23:00）
+    - cron: "0 15 * * *"  # 每天 UTC 15:00（北京时间 23:00）
   workflow_dispatch:
 
-# ⭐ 关键：授予写入仓库权限
 permissions:
   contents: write
 
 jobs:
   renew:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 30
 
     steps:
-      # ---------------------------------------------
-      # 1️⃣ Checkout 代码
-      # ---------------------------------------------
       - name: 📥 Checkout repo
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      # ---------------------------------------------
-      # 2️⃣ Setup Python
-      # ---------------------------------------------
       - name: 🐍 Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.11"
 
-      
-
-      # ---------------------------------------------
-      # 4️⃣ 安装 Python 依赖（通过 requirements.txt）
-      # ---------------------------------------------
-      - name: 📦 Install Python dependencies
+      - name: 📦 Install dependencies
         run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libxcomposite1 libxdamage1 libxrandr2 libgbm1 libasound2
           pip install --upgrade pip
           pip install -r requirements.txt
-          playwright install chromium
+          playwright install
 
-       # ---------------------------------------------
-      # 6️⃣ 执行 Weirdhost 自动续期脚本（CF Bypass）
-      # ---------------------------------------------
-      - name: 🚀 Run Weirdhost auto renew
+      - name: 🚀 Run auto renewal
         env:
           REMEMBER_WEB_COOKIE: ${{ secrets.REMEMBER_WEB_COOKIE }}
           WEIRDHOST_EMAIL: ${{ secrets.WEIRDHOST_EMAIL }}
           WEIRDHOST_PASSWORD: ${{ secrets.WEIRDHOST_PASSWORD }}
           WEIRDHOST_SERVER_URLS: ${{ secrets.WEIRDHOST_SERVER_URLS }}
-          HEADLESS: "true"
-        run: |
-          python main.py
+          HEADLESS: true
+        run: python main.py
 
-      # ---------------------------------------------
-      # 7️⃣ Commit README.md 或 time.txt
-      # ---------------------------------------------
-      - name: ⏱️ Commit time.txt to repo
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          # 如果 time.txt 不存在，说明是第一次运行
-          if [ ! -f time.txt ]; then
-            echo "首次生成时间：$(date +'%Y-%m-%d %H:%M:%S')" > time.txt
-          else
-            echo "$(date +'%Y-%m-%d %H:%M:%S')" > time.txt
-          fi
-
-          git add time.txt README.md
-
-          # 如果有更改再提交
-          if git diff --cached --quiet; then
-            echo "无变化，无需提交"
-          else
-            git commit -m "⏱️ 更新时间文件 / README: $(date +'%Y-%m-%d %H:%M:%S')"
-            git push origin HEAD:main
-          fi
+      - name: 📸 Upload screenshots
+        uses: actions/upload-artifact@v3
+        with:
+          name: renew-screenshots
+          path: screenshots/
