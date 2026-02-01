@@ -40,7 +40,7 @@ jobs:
         run: python main.py
 
       - name: 📸 Upload screenshots
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: renew-screenshots
           path: screenshots/
