@@ -41,43 +41,59 @@ class WeirdhostAutoAPI:
         }])
         log("🍪 使用 Cookie 登录")
 
-    # 获取 cf-turnstile-response
-    def get_cf_token(self, page, server_id, timeout=30):
-        log(f"🛡️ 服务器 {server_id} 获取 CF Turnstile token")
-        iframe_selector = 'iframe[src*="turnstile"]'
-        start = time.time()
-        while time.time() - start < timeout:
-            # 插件会在页面上生成一个隐藏 input 或 window.cfToken
-            token = page.evaluate("window.cfToken ? window.cfToken : null")
-            if token:
-                log(f"✅ 服务器 {server_id} CF token 获取成功")
-                return token
-            # 等待 iframe 消失
-            if page.locator(iframe_selector).count() == 0:
-                # 有时候 iframe 消失即代表插件完成
-                token = page.evaluate("window.cfToken ? window.cfToken : null")
-                if token:
-                    log(f"✅ 服务器 {server_id} CF token 获取成功")
-                    return token
-            time.sleep(1)
-        log(f"❌ 服务器 {server_id} CF token 获取失败", "ERROR")
-        return None
-
     # 单服务器续期
     def renew_server(self, context, server_url):
         server_id = server_url.split("/")[-1]
+        log(f"📦 处理服务器 {server_id}")
+
         page = context.new_page()
         page.set_default_timeout(120000)
+
+        cf_token = None
+
+        # 监听网络请求抓 cf-turnstile-response
+        def on_request(req):
+            nonlocal cf_token
+            if "/renew" in req.url and req.method == "POST":
+                try:
+                    payload = req.post_data_json()
+                    if payload and "cf-turnstile-response" in payload:
+                        cf_token = payload["cf-turnstile-response"]
+                except:
+                    pass
+
+        page.on("request", on_request)
+
         try:
             page.goto(server_url, wait_until="domcontentloaded")
             time.sleep(3)
 
-            # 获取 CF token
-            cf_token = self.get_cf_token(page, server_id)
+            # 找到续期按钮
+            button = page.locator('button:has-text("시간추가"), button:has-text("시간 추가")').first
+            if button.count() == 0 or not button.is_visible():
+                log(f"❌ 未找到续期按钮", "ERROR")
+                return "no_renew_button"
+
+            button.scroll_into_view_if_needed()
+            time.sleep(0.5)
+
+            # 点击按钮触发 CF + Ajax
+            button.click(force=True)
+            log(f"🛡️ 服务器 {server_id} 点击续期按钮，等待 CF Turnstile 自动完成...")
+
+            # 等待 Ajax 发出，最多 30 秒
+            for _ in range(30):
+                if cf_token:
+                    break
+                time.sleep(1)
+
             if not cf_token:
+                log("❌ 未抓到 cf-turnstile-response", "ERROR")
                 return "cf_failed"
 
-            # 构造 API URL
+            log(f"✅ 服务器 {server_id} 获取 cf-turnstile-response 成功")
+
+            # 直接用 requests POST API
             api_url = f"https://hub.weirdhost.xyz/api/client/freeservers/a79a2b26-ad80- 45c3-a25d-42alceed3aba/renew"
             cookies = {
                 "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d": self.remember_web_cookie
@@ -86,11 +102,8 @@ class WeirdhostAutoAPI:
                 "Accept": "application/json",
                 "Content-Type": "application/json"
             }
-            payload = {
-                "cf-turnstile-response": cf_token
-            }
+            payload = {"cf-turnstile-response": cf_token}
 
-            # 直接 POST API
             resp = requests.post(api_url, cookies=cookies, headers=headers, json=payload, timeout=30)
             log(f"📡 Renew API status: {resp.status_code} / body: {resp.text}")
 
