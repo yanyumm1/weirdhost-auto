@@ -22,9 +22,9 @@ class WeirdhostAuto:
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[{ts}] {level}: {msg}")
 
-    # --------------------------------------------------
+    # -----------------------------
     # Cookie 登录
-    # --------------------------------------------------
+    # -----------------------------
     def login_with_cookies(self, context):
         self.log("🍪 使用 Cookie 登录")
         context.add_cookies([{
@@ -38,12 +38,11 @@ class WeirdhostAuto:
             "sameSite": "Lax"
         }])
 
-    # --------------------------------------------------
+    # -----------------------------
     # CF Turnstile 判定窗口
-    # --------------------------------------------------
+    # -----------------------------
     def wait_cf_turnstile(self, page, server_id, watch_time=8):
         self.log(f"🛡️ 服务器 {server_id} 进入 CF 判定窗口")
-
         iframe_selector = 'iframe[src*="challenges.cloudflare.com"]'
         start = time.time()
         iframe_seen = False
@@ -73,9 +72,9 @@ class WeirdhostAuto:
 
         return True
 
-    # --------------------------------------------------
+    # -----------------------------
     # 单服务器续期（含 Network 裁决）
-    # --------------------------------------------------
+    # -----------------------------
     def renew_server(self, context, server_url):
         server_id = server_url.split("/")[-1]
         self.log(f"📦 处理服务器 {server_id}")
@@ -106,6 +105,7 @@ class WeirdhostAuto:
             page.goto(server_url, wait_until="domcontentloaded", timeout=60000)
             time.sleep(3)
 
+            # 找到续期按钮
             button = page.locator(
                 'button:has-text("시간추가"), button:has-text("시간 추가")'
             ).first
@@ -114,10 +114,10 @@ class WeirdhostAuto:
                 self.log("❌ 未找到续期按钮", "ERROR")
                 return "no_renew_button"
 
-            # 人类化点击
-            button.hover()
-            time.sleep(1)
-            button.click()
+            # ---------------- 点击按钮（JS 触发，确保 Ajax 发起） ----------------
+            button.scroll_into_view_if_needed()
+            time.sleep(0.5)
+            page.evaluate("(b) => b.click()", button)
 
             # CF 判定
             if not self.wait_cf_turnstile(page, server_id):
@@ -162,9 +162,9 @@ class WeirdhostAuto:
         finally:
             page.close()
 
-    # --------------------------------------------------
+    # -----------------------------
     # 主流程
-    # --------------------------------------------------
+    # -----------------------------
     def run(self):
         if not self.server_list:
             self.log("❌ 未设置服务器URL", "ERROR")
