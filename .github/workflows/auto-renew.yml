@@ -1,4 +1,4 @@
-name: Weirdhost Auto Renew (CF Bypass)
+name: Weirdhost Auto Renew
 
 on:
   schedule:
@@ -42,16 +42,7 @@ jobs:
           pip install -r requirements.txt
           playwright install chromium
 
-      # ---------------------------------------------
-      # 5️⃣ WARP（降低 CF 风控）
-      # ---------------------------------------------
-      - name: 🌐 Set up WARP
-        uses: fscarmen/warp-on-actions@v1.4
-        with:
-          stack: dual
-          mode: wireguard
-
-      # ---------------------------------------------
+       # ---------------------------------------------
       # 6️⃣ 执行 Weirdhost 自动续期脚本（CF Bypass）
       # ---------------------------------------------
       - name: 🚀 Run Weirdhost auto renew
