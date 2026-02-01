@@ -2,7 +2,7 @@ name: Weirdhost Auto Renew
 
 on:
   schedule:
-    - cron: "0 15 * * *"  # 每天 UTC 15:00（北京时间 23:00）
+    - cron: '0 15 * * *'  # 每天 UTC 15:00（北京时间 23:00）
   workflow_dispatch:
 
 permissions:
@@ -25,10 +25,10 @@ jobs:
       - name: 📦 Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libxcomposite1 libxdamage1 libxrandr2 libgbm1 libasound2
+          sudo apt-get install -y xvfb
           pip install --upgrade pip
           pip install -r requirements.txt
-          playwright install
+          playwright install chromium
 
       - name: 🚀 Run auto renewal
         env:
@@ -37,10 +37,5 @@ jobs:
           WEIRDHOST_PASSWORD: ${{ secrets.WEIRDHOST_PASSWORD }}
           WEIRDHOST_SERVER_URLS: ${{ secrets.WEIRDHOST_SERVER_URLS }}
           HEADLESS: true
-        run: python main.py
-
-      - name: 📸 Upload screenshots
-        uses: actions/upload-artifact@v3
-        with:
-          name: renew-screenshots
-          path: screenshots/
+        run: |
+          python main.py
