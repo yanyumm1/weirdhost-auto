@@ -1,8 +1,8 @@
-name: Weirdhost Auto Renew
+name: Weirdhost Auto Renew (Plugin + Cookie)
 
 on:
   schedule:
-    - cron: "0 15 * * *"  # 每天 UTC 15:00（北京时间 23:00）
+    - cron: "0 18 * * *"   # 每天 UTC 18:00
   workflow_dispatch:
 
 permissions:
@@ -20,27 +20,39 @@ jobs:
       - name: 🐍 Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.10"
 
-      - name: 📦 Install dependencies
+      - name: 📦 Install system deps
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb
+
+      - name: 📦 Install Python deps
+        run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          playwright install
+          playwright install chromium
 
-      - name: 🚀 Run auto renewal
+      - name: 🚀 Run renew
         env:
           REMEMBER_WEB_COOKIE: ${{ secrets.REMEMBER_WEB_COOKIE }}
           WEIRDHOST_EMAIL: ${{ secrets.WEIRDHOST_EMAIL }}
           WEIRDHOST_PASSWORD: ${{ secrets.WEIRDHOST_PASSWORD }}
           WEIRDHOST_SERVER_URLS: ${{ secrets.WEIRDHOST_SERVER_URLS }}
-          HEADLESS: true
-        run: python main.py
+        run: |
+          xvfb-run -a python main.py
 
-      - name: 📸 Upload screenshots
-        uses: actions/upload-artifact@v4
-        with:
-          name: renew-screenshots
-          path: screenshots/
+      - name: ⏱️ Commit time.txt
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          echo "$(date +'%Y-%m-%d %H:%M:%S')" > time.txt
+
+          git add time.txt
+          if git diff --cached --quiet; then
+            echo "无变化"
+          else
+            git commit -m "⏱️ 自动续期运行记录"
+            git push origin HEAD:main
+          fi
