@@ -2,17 +2,17 @@ import os
 import time
 from seleniumbase import SB
 
-# --- 环境变量 ---
-WEIRDHOST_EMAIL = os.environ.get("WEIRDHOST_EMAIL")
-WEIRDHOST_PASSWORD = os.environ.get("WEIRDHOST_PASSWORD")
-REMEMBER_WEB_COOKIE = os.environ.get("REMEMBER_WEB_COOKIE")
-SERVER_URL = os.environ.get("WEIRDHOST_SERVER_URL")
+# ========== 配置 ==========
+SERVER_URL = os.environ.get("WEIRDHOST_SERVER_URL", "https://hub.weirdhost.xyz/server/a79a2b26")
+COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
+EMAIL = os.environ.get("WEIRDHOST_EMAIL")
+PASSWORD = os.environ.get("WEIRDHOST_PASSWORD")
+SCREENSHOT_DIR = "screenshots"
 
-# --- 确保截图文件夹存在 ---
-os.makedirs("screenshots", exist_ok=True)
+os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
 def screenshot(sb, filename):
-    path = os.path.join("screenshots", filename)
+    path = f"{SCREENSHOT_DIR}/{filename}"
     sb.save_screenshot(path)
     print(f"📸 Screenshot saved: {path}")
 
@@ -20,82 +20,83 @@ def main():
     print("Weirdhost 自动续期脚本启动 ===\n")
     print("=== 启动 Xvfb + UC 模式 ===\n")
 
-    try:
-        with SB(uc=True, locale="en", test=True) as sb:
-            print("🚀 浏览器启动（UC Mode）\n")
-
-            # --- Cookie 登录 ---
-            if REMEMBER_WEB_COOKIE:
+    with SB(uc=True, locale="en", test=True, headless=True) as sb:
+        try:
+            # ================= Cookie 登录 =================
+            cookie_value = os.environ.get("WEIRDHOST_COOKIE")
+            if cookie_value:
                 print("🔐 尝试使用 Cookie 登录...")
-                sb.open("https://hub.weirdhost.xyz")
-                time.sleep(2)
-                try:
-                    sb.add_cookie({
-                        "name": "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d",
-                        "value": REMEMBER_WEB_COOKIE,
-                        "domain": "hub.weirdhost.xyz",
-                        "path": "/",
-                        "secure": True,
-                        "httpOnly": True,
-                    })
-                    print("✅ Cookie 添加成功")
-                except Exception as e:
-                    print(f"⚠️ Cookie 添加失败: {e}")
-                    screenshot(sb, "cookie_fail.png")
-
-            # 跳转到目标服务器页面
+                sb.open("https://hub.weirdhost.xyz")  # 先打开域名主页
+                sb.add_cookie({
+                    "name": COOKIE_NAME,
+                    "value": cookie_value,
+                    "domain": "hub.weirdhost.xyz",
+                    "path": "/",
+                    "secure": True,
+                    "httpOnly": True,
+                    "sameSite": "Lax",
+                })
+                sb.refresh()
+                print("✅ Cookie 添加成功")
+            else:
+                print("⚠️ 未提供 Cookie，回退邮箱密码登录")
+                sb.open("https://hub.weirdhost.xyz/auth/login")
+                sb.wait_for_element_visible("input[name='username']", timeout=30)
+                sb.type("input[name='username']", EMAIL)
+                sb.type("input[name='password']", PASSWORD)
+                sb.click("button[type='submit']")
+                time.sleep(5)
+            
+            # ================= 打开服务器页面 =================
             sb.open(SERVER_URL)
-            time.sleep(2)
+            print("🌐 服务器页面打开")
+            time.sleep(8)  # 等待 JS 渲染
             screenshot(sb, "server_page.png")
 
-            # --- 点击 '시간 추가' / Renew 按钮打开 Modal ---
+            # ================= 打开 Renew Modal =================
             try:
                 print("🕒 尝试打开 Renew Modal...")
-                sb.wait_for_element_visible("button:has-text('시간 추가')", timeout=15)
+                sb.wait_for_element_visible("button:has-text('시간 추가')", timeout=30)
                 sb.click("button:has-text('시간 추가')")
                 time.sleep(2)
-                screenshot(sb, "01_modal_open.png")
+                screenshot(sb, "modal_open.png")
             except Exception as e:
                 print(f"❌ 打开 Modal 失败: {e}")
                 screenshot(sb, "modal_open_fail.png")
                 return
 
-            # --- CF/Turnstile 盾交互 ---
+            # ================= 处理 CF / Turnstile 盾 =================
             try:
-                print("☑️ 尝试点击 Turnstile 盾...")
-                sb.uc_gui_click_captcha()  # UC 模式自带方法处理 Turnstile
+                print("☑️ 尝试点击盾确认...")
+                sb.uc_gui_click_captcha()
                 time.sleep(4)
-                screenshot(sb, "02_after_captcha.png")
             except Exception as e:
-                print(f"⚠️ captcha 点击异常: {e}")
-                screenshot(sb, "02_captcha_fail.png")
+                print(f"⚠️ 盾确认失败或未找到: {e}")
+            screenshot(sb, "after_captcha.png")
 
-            # --- 查看 cookies（确认 cf_clearance） ---
+            # ================= 检查 CF Cookie =================
             cookies = sb.get_cookies()
-            cookie_names = [c["name"] for c in cookies]
-            print("🍪 Cookies:", cookie_names)
             cf_clearance = next((c["value"] for c in cookies if c["name"] == "cf_clearance"), None)
             print("🧩 cf_clearance:", cf_clearance)
             if not cf_clearance:
-                screenshot(sb, "03_no_cf_clearance.png")
-                print("❌ 未获取 cf_clearance，可能 Cloudflare 未放行")
-                return
+                screenshot(sb, "no_cf_clearance.png")
+                print("❌ 未获取 cf_clearance（Cloudflare 可能未放行）")
 
-            # --- 提交 Renew 表单 ---
+            # ================= 提交 Renew =================
             try:
-                print("🚀 提交续期表单...")
                 sb.execute_script("document.querySelector('#renew-modal form').submit();")
                 time.sleep(3)
-                screenshot(sb, "04_after_submit.png")
+                screenshot(sb, "after_submit.png")
                 print("ℹ️ 已尝试提交续期（结果需以后端为准）")
             except Exception as e:
-                print(f"❌ 提交表单失败: {e}")
+                print(f"❌ 提交续期失败: {e}")
                 screenshot(sb, "submit_fail.png")
 
-            print("\n任务完成，浏览器关闭。")
+            print("\n任务完成。浏览器关闭。")
 
-    except Exception as e:
-        print(f"❌ 脚本运行异常: {e}")
+        except Exception as e:
+            print(f"❌ 运行异常: {e}")
+            screenshot(sb, "general_error.png")
 
 if __name__ == "__main__":
     main()
