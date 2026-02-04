@@ -1,300 +1,288 @@
 import os
 import time
 import random
-from pathlib import Path
 from seleniumbase import SB
 
-
-# ============================================================
-# 必须保留：环境变量读取
-# ============================================================
+# =========================
+# 环境变量
+# =========================
 REMEMBER_WEB_COOKIE = os.environ.get("REMEMBER_WEB_COOKIE")
 SERVER_URL = os.environ.get("WEIRDHOST_SERVER_URL")
 
-# 你提供的 socks5
-SOCKS5_PROXY = os.environ.get(
-    "SOCKS5_PROXY",
-    "socks5://9afd1229:51e7ce204913@121.163.216.45:25525"
-)
+# =========================
+# SOCKS5 代理
+# =========================
+SOCKS5_PROXY = "socks5://9afd1229:51e7ce204913@121.163.216.45:25525"
 
-SCREENSHOT_DIR = Path("screenshots")
-SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+# =========================
+# 截图目录
+# =========================
+os.makedirs("screenshots", exist_ok=True)
 
 
-# ============================================================
+# =========================
 # 工具函数
-# ============================================================
-def save_shot(sb, name: str):
-    path = SCREENSHOT_DIR / name
-    sb.save_screenshot(str(path))
-    print(f"📸 Screenshot saved: {path}")
+# =========================
+def screenshot(sb, name):
+    path = f"screenshots/{name}"
+    try:
+        sb.save_screenshot(path)
+        print(f"📸 Screenshot saved: {path}")
+    except Exception as e:
+        print(f"⚠️ Screenshot failed: {e}")
 
 
-def human_sleep(a=0.4, b=1.5):
+def human_sleep(a=0.8, b=2.0):
     time.sleep(random.uniform(a, b))
 
 
+def wait_react_loaded(sb):
+    sb.wait_for_ready_state_complete(timeout=30)
+    human_sleep(1.5, 3.0)
+
+
 def human_scroll(sb):
-    """随机滚动，模拟人类行为"""
     try:
-        scroll_y = random.randint(200, 900)
-        sb.execute_script(f"window.scrollBy(0, {scroll_y});")
-        human_sleep(0.4, 1.2)
-        sb.execute_script(f"window.scrollBy(0, {-random.randint(50, 250)});")
-        human_sleep(0.3, 1.0)
+        sb.execute_script("window.scrollTo(0, document.body.scrollHeight * 0.3)")
+        human_sleep(1.2, 2.0)
+        sb.execute_script("window.scrollTo(0, document.body.scrollHeight * 0.65)")
+        human_sleep(1.2, 2.0)
+        sb.execute_script("window.scrollTo(0, 0)")
+        human_sleep(1.0, 1.8)
     except Exception:
         pass
 
 
-def random_click_blank(sb):
-    """随机点击空白区域，触发 Turnstile 行为检测"""
+def remove_ads(sb):
     try:
         sb.execute_script("""
-            document.body.dispatchEvent(new MouseEvent('mousemove', {clientX: 200, clientY: 200}));
+        document.querySelectorAll("iframe").forEach(f=>{
+            const src = String(f.src || "");
+            if (!src.includes("challenges.cloudflare.com")) {
+                f.remove();
+            }
+        });
         """)
-        human_sleep(0.2, 0.6)
-
-        sb.click("body")
-        human_sleep(0.3, 1.0)
     except Exception:
         pass
 
 
-def cookie_login(sb):
-    """
-    通过 remember_web cookie 登录
-    """
-    if not REMEMBER_WEB_COOKIE:
-        raise Exception("❌ 缺少环境变量 REMEMBER_WEB_COOKIE")
-
-    print("🔐 Cookie 登录 (remember_web...)")
-
-    sb.open("https://weirdhost.xyz/")
-    human_sleep(1, 2)
-
-    sb.add_cookie({
-        "name": "remember_web",
-        "value": REMEMBER_WEB_COOKIE,
-        "domain": ".weirdhost.xyz",
-        "path": "/"
-    })
-
-    human_sleep(0.5, 1.0)
-
-
-def click_renew_button(sb) -> bool:
-    """
-    点击 Renew / 시간 추가
-    """
+# =========================
+# Renew / NEXT 逻辑
+# =========================
+def click_renew_button(sb):
     print("🕒 查找 Renew/시간 추가 按钮 ...")
 
     selectors = [
         'button[color="primary"]',
-        'button:contains("Renew")',
         'button:contains("시간 추가")',
-        'button:contains("추가")',
+        'button:contains("Renew")',
     ]
 
     for sel in selectors:
         try:
-            if sb.is_element_visible(sel):
-                sb.click(sel)
-                print(f"✅ 点击成功: {sel}")
-                return True
+            sb.wait_for_element_visible(sel, timeout=12)
+            sb.scroll_to(sel)
+            human_sleep()
+            sb.click(sel)
+            print(f"✅ 点击成功: {sel}")
+            return True
         except Exception:
-            continue
+            pass
 
-    return False
-
-
-def detect_turnstile_present(sb) -> bool:
-    """
-    判断页面是否有 Turnstile
-    """
     try:
-        html = sb.get_page_source().lower()
-        if "turnstile" in html or "challenges.cloudflare" in html:
+        clicked = sb.execute_script("""
+        (() => {
+            const keys = ["renew", "시간", "추가", "extend"];
+            for (const b of document.querySelectorAll("button")) {
+                const t = (b.innerText || "").toLowerCase();
+                if (keys.some(k => t.includes(k))) {
+                    b.scrollIntoView({block:"center"});
+                    b.click();
+                    return true;
+                }
+            }
+            return false;
+        })();
+        """)
+        if clicked:
+            print("✅ JS fallback 点击成功")
             return True
     except Exception:
         pass
 
-    # iframe 方式检测
-    try:
-        iframes = sb.find_elements("iframe")
-        for f in iframes:
-            try:
-                src = f.get_attribute("src") or ""
-                if "turnstile" in src or "cloudflare" in src:
-                    return True
-            except Exception:
-                continue
-    except Exception:
-        pass
-
     return False
 
 
-def try_click_turnstile(sb) -> bool:
-    """
-    重点函数：
-    尝试通过 Turnstile（不等 token、不等 next）
-    只做：拟人化 + 点击 captcha
-    """
-    print("☑️ 尝试通过 Cloudflare Turnstile ...")
-
-    # 先滚动和随机点击，增加人类特征
-    human_scroll(sb)
-    random_click_blank(sb)
-
-    # SeleniumBase UC 内置验证码点击
-    try:
-        sb.uc_gui_click_captcha()
-        print("✅ 已执行 uc_gui_click_captcha()")
-        return True
-    except Exception as e:
-        print(f"⚠️ uc_gui_click_captcha() 执行失败: {e}")
-        return False
-
-
-def detect_renew_success(sb) -> bool:
-    """
-    检测是否续期成功（不依赖 Turnstile token）
-    只靠页面变化判断
-    """
-    try:
-        html = sb.get_page_source().lower()
-
-        success_keywords = [
-            "success",
-            "renewed",
-            "completed",
-            "done",
-            "연장",
-            "성공",
-            "갱신",
-            "updated",
-            "expires",
-            "expiration",
-        ]
-
-        for k in success_keywords:
-            if k in html:
-                return True
-    except Exception:
-        pass
-
-    # 如果 Turnstile 已消失，也很可能成功
-    if not detect_turnstile_present(sb):
-        return True
-
-    return False
-
-
-def wait_for_renew_result(sb, timeout=30) -> bool:
-    """
-    等待续期结果出现
-    """
+def wait_next_button(sb, timeout=60):
+    print("⏳ 等待 NEXT 按钮出现 ...")
     start = time.time()
-    while time.time() - start < timeout:
-        human_sleep(1.0, 2.0)
 
-        # 页面可能会自动刷新或弹窗
+    while time.time() - start < timeout:
         try:
-            if detect_renew_success(sb):
+            found = sb.execute_script("""
+            (() => {
+                return Array.from(document.querySelectorAll("button"))
+                  .some(b => {
+                    const t = (b.innerText || "").toLowerCase();
+                    return b.offsetParent && (t.includes("next") || t.includes("다음"));
+                  });
+            })();
+            """)
+            if found:
+                print("✅ NEXT 按钮已出现")
                 return True
         except Exception:
             pass
+        time.sleep(1)
 
     return False
 
 
-def ensure_page_loaded(sb):
-    """等待页面加载稳定"""
-    human_sleep(1.5, 2.8)
+def click_next_button(sb):
+    print("🟢 尝试点击 NEXT ...")
     try:
-        sb.wait_for_ready_state_complete(timeout=10)
+        clicked = sb.execute_script("""
+        (() => {
+            for (const b of document.querySelectorAll("button")) {
+                const t = (b.innerText || "").toLowerCase();
+                if (b.offsetParent && (t.includes("next") || t.includes("다음"))) {
+                    b.scrollIntoView({block:"center"});
+                    b.click();
+                    return true;
+                }
+            }
+            return false;
+        })();
+        """)
+        if clicked:
+            print("✅ NEXT 点击成功")
+            return True
     except Exception:
         pass
+    return False
 
 
-# ============================================================
+# =========================
+# Turnstile 核心判断
+# =========================
+def wait_turnstile_passed(sb, timeout=90):
+    print("🛡️ 等待 Turnstile 真正通过 ...")
+    start = time.time()
+
+    while time.time() - start < timeout:
+        try:
+            passed = sb.execute_script("""
+            (() => {
+                const iframes = [...document.querySelectorAll("iframe")]
+                  .filter(f => (f.src || "").includes("challenges.cloudflare.com"));
+                if (iframes.length === 0) return true;
+                for (const f of iframes) {
+                    if (f.style.display === "none") return true;
+                }
+                return false;
+            })();
+            """)
+            if passed:
+                print("✅ Turnstile 判定通过")
+                return True
+        except Exception:
+            pass
+        time.sleep(1)
+
+    print("❌ Turnstile 超时未通过")
+    return False
+
+
+# =========================
 # 主流程
-# ============================================================
+# =========================
 def main():
-    print("\n=== Weirdhost 自动续期启动 ===\n")
+    print("🚀 Weirdhost 自动续期启动")
 
     if not SERVER_URL:
-        raise Exception("❌ 缺少环境变量 WEIRDHOST_SERVER_URL")
-
-    print("🚀 浏览器启动 (UC Mode + SOCKS5 Proxy)")
-    print(f"🌍 Proxy: {SOCKS5_PROXY}")
+        raise Exception("❌ WEIRDHOST_SERVER_URL 未设置")
 
     with SB(
         uc=True,
-        test=True,
         locale="en",
-        headless=False,          # 必须 false，提高通过率
-        proxy=SOCKS5_PROXY,
-        chromium_arg="--disable-blink-features=AutomationControlled",
+        headless=False,
+        chromium_arg=f"--window-size=1920,1080 --proxy-server={SOCKS5_PROXY}"
     ) as sb:
 
-        # 1) Cookie 登录
-        cookie_login(sb)
+        print("🌐 启动浏览器 (UC + SOCKS5)")
+        sb.uc_open_with_reconnect("https://hub.weirdhost.xyz", reconnect_time=5)
+        wait_react_loaded(sb)
 
-        # 2) 打开服务器页面
-        print(f"🌐 打开服务器页面: {SERVER_URL}")
-        sb.open(SERVER_URL)
-        ensure_page_loaded(sb)
-        save_shot(sb, "01_server_page.png")
+        # Cookie 登录
+        if REMEMBER_WEB_COOKIE:
+            print("🍪 使用 Cookie 登录")
+            sb.add_cookie({
+                "name": "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d",
+                "value": REMEMBER_WEB_COOKIE,
+                "domain": "hub.weirdhost.xyz",
+                "path": "/",
+                "secure": True,
+                "httpOnly": True,
+            })
+            sb.refresh()
+            wait_react_loaded(sb)
 
-        # 3) 点击 Renew
+        print(f"📦 打开服务器页面: {SERVER_URL}")
+        sb.uc_open_with_reconnect(SERVER_URL, reconnect_time=5)
+        wait_react_loaded(sb)
+
+        remove_ads(sb)
+        human_scroll(sb)
+        screenshot(sb, "01_server_page.png")
+
         if not click_renew_button(sb):
-            save_shot(sb, "02_no_renew_button.png")
-            raise Exception("❌ 未找到 Renew/시간 추가 按钮")
+            screenshot(sb, "renew_not_found.png")
+            raise Exception("❌ Renew 按钮未找到")
 
-        ensure_page_loaded(sb)
-        save_shot(sb, "03_after_click_renew.png")
+        human_sleep(3, 5)
+        screenshot(sb, "02_after_renew.png")
 
-        # 4) 如果有 Turnstile，就尝试多轮拟人化点击
-        max_try = 6
-        for i in range(max_try):
-            print(f"\n🧩 Turnstile 处理轮次: {i+1}/{max_try}")
+        # ===== Turnstile 真人方案 =====
+        print("☑️ Cloudflare Turnstile 真人模式启动")
 
-            if not detect_turnstile_present(sb):
-                print("✅ 未检测到 Turnstile（可能已经通过或不需要验证）")
+        human_scroll(sb)
+        human_sleep(6, 10)
+
+        for i in range(3):
+            print(f"🧠 点击 Turnstile 第 {i+1} 次")
+            try:
+                sb.uc_gui_click_captcha()
+            except Exception:
+                pass
+
+            human_sleep(4, 7)
+
+            if wait_turnstile_passed(sb, timeout=30):
                 break
-
-            try_click_turnstile(sb)
-            human_sleep(2.5, 4.5)
-
-            # 有时候需要滚动触发
-            human_scroll(sb)
-            human_sleep(0.8, 1.6)
-
-            # 检测是否成功
-            if detect_renew_success(sb):
-                print("✅ 检测到续期成功迹象")
-                break
-
-            # 有时候 Turnstile 点击后页面需要刷新一次才生效
-            if i in (1, 3):
-                print("🔄 尝试刷新页面触发验证完成...")
-                sb.refresh()
-                ensure_page_loaded(sb)
-
-        save_shot(sb, "04_after_turnstile_process.png")
-
-        # 5) 等待续期结果（不再等 token、不再等 NEXT）
-        print("\n⏳ 等待续期结果确认 ...")
-        ok = wait_for_renew_result(sb, timeout=35)
-
-        if ok:
-            print("🎉 续期成功（检测到页面已通过/续期成功标记）")
-            save_shot(sb, "05_renew_success.png")
         else:
-            print("❌ 未检测到续期成功标记（可能仍未通过 Turnstile）")
-            save_shot(sb, "05_renew_failed.png")
-            raise Exception("❌ 自动续期失败：Turnstile 未通过或页面无成功标记")
+            screenshot(sb, "cf_failed_final.png")
+            raise Exception("❌ Turnstile 多次尝试仍失败")
+
+        screenshot(sb, "03_turnstile_passed.png")
+
+        if not wait_next_button(sb, timeout=60):
+            screenshot(sb, "04_no_next.png")
+            raise Exception("❌ NEXT 未出现")
+
+        if not click_next_button(sb):
+            screenshot(sb, "05_next_click_fail.png")
+            raise Exception("❌ NEXT 点击失败")
+
+        human_sleep(6, 10)
+        screenshot(sb, "06_after_next.png")
+
+        print("🔄 刷新确认续期状态")
+        sb.refresh()
+        wait_react_loaded(sb)
+        screenshot(sb, "07_final.png")
+
+        print("🎉 Weirdhost 自动续期完成")
 
 
 if __name__ == "__main__":
