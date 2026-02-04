@@ -27,10 +27,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y xvfb
 
-      - name: 📦 Install Python deps
+      - name: 📦 Install Python deps from requirements.txt
         run: |
           pip install --upgrade pip
-          pip install seleniumbase pyvirtualdisplay
+          pip install -r requirements.txt
 
       - name: 🚀 Run renew script
         env:
