@@ -22,21 +22,23 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: 🖥️ Install system deps
+      - name: 🖥️ Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb
 
-      - name: 📦 Install Python deps from requirements.txt
+      - name: 📦 Install Python dependencies
         run: |
-          pip install --upgrade pip
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 🚀 Run renew script
+      - name: 🚀 Run Weirdhost renew script (UC Mode)
         env:
           WEIRDHOST_EMAIL: ${{ secrets.WEIRDHOST_EMAIL }}
           WEIRDHOST_PASSWORD: ${{ secrets.WEIRDHOST_PASSWORD }}
+          REMEMBER_WEB_COOKIE: ${{ secrets.REMEMBER_WEB_COOKIE }}
         run: |
+          mkdir -p screenshots
           xvfb-run -a python main.py
 
       - name: 📸 Upload screenshots
