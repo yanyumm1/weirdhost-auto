@@ -2,7 +2,6 @@ import os
 import time
 from seleniumbase import SB
 
-
 REMEMBER_WEB_COOKIE = os.environ.get("REMEMBER_WEB_COOKIE")
 SERVER_URL = os.environ.get("WEIRDHOST_SERVER_URL")
 
@@ -16,17 +15,11 @@ def screenshot(sb, name):
 
 
 def wait_react_loaded(sb, timeout=30):
-    """
-    React/Vue 页面常见：readyState 完成后还会异步渲染。
-    """
     sb.wait_for_ready_state_complete(timeout=timeout)
     sb.sleep(2)
 
 
 def remove_ads(sb):
-    """
-    Weirdhost 页面有 iframe 广告可能挡住按钮
-    """
     try:
         sb.execute_script("""
         document.querySelectorAll("iframe").forEach(f=>f.remove());
@@ -35,73 +28,20 @@ def remove_ads(sb):
         pass
 
 
-def get_cookie_value(sb, cookie_name):
-    try:
-        cookies = sb.get_cookies()
-        for c in cookies:
-            if c.get("name") == cookie_name:
-                return c.get("value")
-    except Exception:
-        return None
-    return None
-
-
-def wait_for_cf_clearance(sb, timeout=25):
-    """
-    Cloudflare 放行后会出现 cf_clearance
-    """
-    print("🧩 等待 Cloudflare cf_clearance ...")
-
-    start = time.time()
-    while time.time() - start < timeout:
-        cf_clearance = get_cookie_value(sb, "cf_clearance")
-        if cf_clearance:
-            print("✅ 已获取 cf_clearance")
-            return cf_clearance
-        sb.sleep(1)
-
-    print("❌ 超时：未获取 cf_clearance")
-    return None
-
-
-def try_click_turnstile(sb):
-    """
-    尝试点击 Cloudflare Turnstile。
-    SeleniumBase 的 uc_gui_click_captcha() 很好用，但不一定每次都能点到。
-    """
-    print("☑️ 尝试通过 Cloudflare Turnstile ...")
-
-    try:
-        sb.uc_gui_click_captcha()
-        sb.sleep(4)
-        print("✅ 已执行 uc_gui_click_captcha()")
-        return True
-    except Exception as e:
-        print(f"⚠️ 未检测到验证码或点击失败: {e}")
-        return False
-
-
-def find_and_click_renew_button(sb):
-    """
-    Renew/시간 추가 按钮点击逻辑（多 selector + 文本匹配）
-    """
+def click_renew_button(sb):
     print("🕒 查找 Renew/시간 추가 按钮 ...")
 
     selectors = [
         'button[color="primary"]',
-        'button.MuiButton-containedPrimary',
-        'div[class*="RenewBox"] button',
         'button:contains("Renew")',
-        'button:contains("Extend")',
-        'button:contains("Add Time")',
-        'button:contains("시간")',
+        'button:contains("시간 추가")',
         'button:contains("추가")',
+        'div[class*="RenewBox"] button',
     ]
 
-    # 先尝试 SeleniumBase 内置 contains 语法（它支持）
     for sel in selectors:
         try:
-            sb.wait_for_element_visible(sel, timeout=6)
+            sb.wait_for_element_visible(sel, timeout=8)
             sb.scroll_to(sel)
             sb.click(sel)
             print(f"✅ 点击成功: {sel}")
@@ -109,16 +49,15 @@ def find_and_click_renew_button(sb):
         except Exception:
             pass
 
-    # JS fallback：扫描所有 button，看文本是否包含 renew/시간
+    # JS fallback: scan all buttons
     try:
         clicked = sb.execute_script("""
         const btns = Array.from(document.querySelectorAll("button"));
-        const keywords = ["renew", "extend", "add time", "시간", "추가"];
+        const keywords = ["renew", "extend", "add", "시간", "추가"];
 
         for (const b of btns) {
             const t = (b.innerText || "").trim().toLowerCase();
             if (!t) continue;
-
             for (const k of keywords) {
                 if (t.includes(k)) {
                     b.scrollIntoView({behavior:"instant", block:"center"});
@@ -130,117 +69,136 @@ def find_and_click_renew_button(sb):
         return false;
         """)
         if clicked:
-            print("✅ JS fallback 点击成功（通过 innerText 匹配）")
+            print("✅ JS fallback 点击成功（按钮文本匹配）")
             return True
     except Exception:
         pass
 
-    print("❌ 未找到续期按钮")
+    print("❌ 未找到 Renew 按钮")
     return False
 
 
-def wait_modal_open(sb, timeout=10):
+def wait_turnstile_token(sb, timeout=40):
     """
-    等待续期弹窗出现。
+    Weirdhost 使用 Turnstile token，不会给 cf_clearance cookie。
+    所以我们等 hidden input: name="cf-turnstile-response"
     """
-    print("🪟 等待续期弹窗出现 ...")
+    print("🧩 等待 Turnstile token (cf-turnstile-response) ...")
 
-    modal_selectors = [
-        "#renew-modal",
-        '[id*="renew"]',
-        'div[role="dialog"]',
-        ".MuiDialog-root",
-        ".modal",
-    ]
+    start = time.time()
+    while time.time() - start < timeout:
+        token = sb.execute_script("""
+        const el = document.querySelector('input[name="cf-turnstile-response"]');
+        if (!el) return null;
+        const v = (el.value || "").trim();
+        return v.length > 10 ? v : null;
+        """)
+        if token:
+            print(f"✅ Turnstile token 已生成 (len={len(token)})")
+            return token
 
-    for sel in modal_selectors:
-        try:
-            sb.wait_for_element_visible(sel, timeout=timeout)
-            print(f"✅ 检测到弹窗: {sel}")
-            return sel
-        except Exception:
-            pass
+        sb.sleep(1)
 
-    print("⚠️ 未检测到明显弹窗（可能直接触发续期流程）")
+    print("❌ 超时：未获取 Turnstile token")
     return None
 
 
-def wait_modal_close(sb, timeout=20):
-    """
-    很多站点续期成功后 modal 会自动关闭。
-    """
-    print("⏳ 等待弹窗关闭（如果存在）...")
+def try_click_turnstile(sb):
+    print("☑️ 尝试通过 Cloudflare Turnstile ...")
+    try:
+        sb.uc_gui_click_captcha()
+        sb.sleep(4)
+        print("✅ 已执行 uc_gui_click_captcha()")
+        return True
+    except Exception as e:
+        print(f"⚠️ captcha 点击异常: {e}")
+        return False
 
-    start = time.time()
-    while time.time() - start < timeout:
-        # 常见 modal selector
-        exists = sb.execute_script("""
-        return !!(
-            document.querySelector("#renew-modal") ||
-            document.querySelector(".MuiDialog-root") ||
-            document.querySelector('div[role="dialog"]')
-        );
+
+def click_confirm_button(sb):
+    """
+    Renew modal 里通常会有第二个确认按钮，比如：
+    Confirm / Submit / Renew / 추가 / 결제 등
+    """
+    print("🟢 尝试点击确认续期按钮 ...")
+
+    selectors = [
+        'button:contains("Confirm")',
+        'button:contains("Submit")',
+        'button:contains("Renew")',
+        'button:contains("Pay")',
+        'button:contains("Continue")',
+        'button:contains("확인")',
+        'button:contains("결제")',
+        'button:contains("추가")',
+        'button[type="submit"]',
+    ]
+
+    for sel in selectors:
+        try:
+            sb.wait_for_element_visible(sel, timeout=5)
+            sb.scroll_to(sel)
+            sb.click(sel)
+            print(f"✅ 点击确认按钮成功: {sel}")
+            return True
+        except Exception:
+            pass
+
+    # JS fallback: click last visible button in dialog/modal
+    try:
+        clicked = sb.execute_script("""
+        const dialog = document.querySelector('div[role="dialog"]') ||
+                       document.querySelector("#renew-modal") ||
+                       document.querySelector(".MuiDialog-root");
+
+        const scope = dialog || document;
+
+        const btns = Array.from(scope.querySelectorAll("button"))
+            .filter(b => b.offsetParent !== null);
+
+        if (btns.length === 0) return false;
+
+        // 常见：最后一个是 confirm
+        const last = btns[btns.length - 1];
+        last.scrollIntoView({behavior:"instant", block:"center"});
+        last.click();
+        return true;
         """)
-        if not exists:
-            print("✅ 弹窗已关闭")
+        if clicked:
+            print("✅ JS fallback 点击确认按钮成功")
             return True
+    except Exception:
+        pass
 
-        sb.sleep(1)
-
-    print("⚠️ 弹窗未关闭（可能站点不会自动关闭）")
+    print("⚠️ 未找到确认按钮")
     return False
 
 
-def wait_possible_success_toast(sb, timeout=15):
+def submit_form_fallback(sb):
     """
-    等待页面出现 success toast（很多站点会弹一个 toast）
+    如果站点确实是 form submit 驱动（虽然你说人工不用 submit，但这里做兜底）
     """
-    print("🔎 等待成功提示（toast/alert）...")
+    print("📨 fallback: 尝试 form.submit() ...")
+    try:
+        sb.execute_script("""
+        const form =
+            document.querySelector('#renew-modal form') ||
+            document.querySelector('form');
 
-    keywords = ["success", "renewed", "completed", "done", "성공", "완료"]
-
-    start = time.time()
-    while time.time() - start < timeout:
-        found = sb.execute_script("""
-        const keywords = arguments[0];
-        const els = Array.from(document.querySelectorAll("div,span,p"));
-        for (const el of els) {
-            const txt = (el.innerText || "").trim().toLowerCase();
-            if (!txt) continue;
-            for (const k of keywords) {
-                if (txt.includes(k)) {
-                    return txt;
-                }
-            }
-        }
-        return null;
-        """, keywords)
-
-        if found:
-            print(f"✅ 检测到疑似成功提示: {found[:120]}")
-            return True
-
-        sb.sleep(1)
-
-    print("⚠️ 未检测到 success toast（不代表失败）")
-    return False
-
-
-def force_refresh_and_check(sb):
-    """
-    刷新页面让状态更新（React 经常不会自动刷新）
-    """
-    print("🔄 刷新页面确认续期状态 ...")
-    sb.refresh()
-    wait_react_loaded(sb)
-    remove_ads(sb)
+        if (form) form.submit();
+        """)
+        print("✅ 已执行 form.submit()")
+        return True
+    except Exception as e:
+        print("❌ form.submit() 失败:", e)
+        return False
 
 
 def main():
     print("=== Weirdhost 自动续期启动 ===")
 
     if not SERVER_URL:
-        raise Exception("❌ 环境变量 WEIRDHOST_SERVER_URL 未设置！")
+        raise Exception("❌ WEIRDHOST_SERVER_URL 未设置")
 
     with SB(
         uc=True,
@@ -272,7 +230,7 @@ def main():
             sb.refresh()
             wait_react_loaded(sb)
 
-        # ---------- 打开服务器页面 ----------
+        # ---------- 打开服务器 ----------
         print(f"🌐 打开服务器页面: {SERVER_URL}")
         sb.open(SERVER_URL)
         wait_react_loaded(sb)
@@ -281,44 +239,47 @@ def main():
         screenshot(sb, "01_server_page.png")
 
         # ---------- 点击续期 ----------
-        if not find_and_click_renew_button(sb):
+        if not click_renew_button(sb):
             screenshot(sb, "02_renew_not_found.png")
-            raise Exception("❌ 未找到 Renew/时间追加 按钮")
+            raise Exception("❌ 未找到 Renew 按钮")
 
         sb.sleep(2)
-        modal_sel = wait_modal_open(sb, timeout=8)
-
         screenshot(sb, "03_after_click_renew.png")
 
-        # ---------- Cloudflare ----------
+        # ---------- Turnstile ----------
         try_click_turnstile(sb)
         screenshot(sb, "04_after_turnstile_click.png")
 
-        # 等待 cf_clearance
-        cf_clearance = wait_for_cf_clearance(sb, timeout=30)
-        if not cf_clearance:
-            screenshot(sb, "05_no_cf_clearance.png")
-            raise Exception("❌ Cloudflare 未放行（无 cf_clearance）")
+        # ---------- 等 token ----------
+        token = wait_turnstile_token(sb, timeout=50)
+        if not token:
+            screenshot(sb, "05_no_turnstile_token.png")
+            raise Exception("❌ 未获取 cf-turnstile-response token（验证未通过）")
 
-        # ---------- 等待页面自动续期 ----------
-        # 人工续期流程里：打勾后不需要 submit
-        # 所以这里就是等待请求完成 + UI变化
-        print("⏳ 等待续期动作自动完成 ...")
+        screenshot(sb, "06_turnstile_token_ready.png")
 
-        wait_possible_success_toast(sb, timeout=10)
+        # ---------- 点击确认/续期 ----------
+        clicked = click_confirm_button(sb)
+        if not clicked:
+            print("⚠️ 未找到确认按钮，尝试 fallback submit")
+            submit_form_fallback(sb)
 
-        # 等待弹窗关闭（如果会自动关闭）
-        wait_modal_close(sb, timeout=15)
+        # ---------- 等待页面处理 ----------
+        print("⏳ 等待续期请求完成 ...")
+        sb.sleep(6)
 
-        sb.sleep(2)
-        screenshot(sb, "06_after_wait.png")
+        screenshot(sb, "07_after_submit.png")
 
-        # ---------- 强制刷新确认 ----------
-        force_refresh_and_check(sb)
-        screenshot(sb, "07_after_refresh.png")
+        # ---------- 刷新确认 ----------
+        print("🔄 刷新页面确认状态更新 ...")
+        sb.refresh()
+        wait_react_loaded(sb)
+        remove_ads(sb)
 
-        print("✅ 脚本执行结束：已完成续期流程（建议人工核对截图）")
+        screenshot(sb, "08_after_refresh.png")
+
         print("=== 任务完成 ===")
+        print("✅ 已完成 Turnstile + 提交动作（请核对截图确认续期是否生效）")
 
 
 if __name__ == "__main__":
