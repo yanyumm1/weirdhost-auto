@@ -2,11 +2,8 @@ name: Weirdhost Auto Renew
 
 on:
   schedule:
-    - cron: "10 18 * * *"   # 每天 UTC 18:10
+    - cron: "10 18 * * *"
   workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
   renew:
@@ -22,20 +19,25 @@ jobs:
         with:
           python-version: "3.10"
 
+      # -------- 修复字体乱码 --------
       - name: 🖥️ Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb
+          sudo apt-get install -y \
+            xvfb \
+            fonts-noto-cjk \
+            fonts-noto-color-emoji \
+            libgtk-3-0 \
+            libgbm1 \
+            libasound2
 
       - name: 📦 Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install seleniumbase
 
-      - name: 🚀 Run Weirdhost renew script (UC Mode)
+      - name: 🚀 Run Weirdhost renew script
         env:
-          WEIRDHOST_EMAIL: ${{ secrets.WEIRDHOST_EMAIL }}
-          WEIRDHOST_PASSWORD: ${{ secrets.WEIRDHOST_PASSWORD }}
           REMEMBER_WEB_COOKIE: ${{ secrets.REMEMBER_WEB_COOKIE }}
           WEIRDHOST_SERVER_URL: ${{ secrets.WEIRDHOST_SERVER_URL }}
         run: |
