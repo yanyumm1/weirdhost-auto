@@ -2,101 +2,121 @@ import os
 import time
 from seleniumbase import SB
 
-# ========== 配置 ==========
-SERVER_URL = os.environ.get("WEIRDHOST_SERVER_URL", "https://hub.weirdhost.xyz/server/a79a2b26")
-COOKIE_NAME = "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d"
-EMAIL = os.environ.get("WEIRDHOST_EMAIL")
-PASSWORD = os.environ.get("WEIRDHOST_PASSWORD")
-SCREENSHOT_DIR = "screenshots"
+WEIRDHOST_EMAIL = os.environ.get("WEIRDHOST_EMAIL")
+WEIRDHOST_PASSWORD = os.environ.get("WEIRDHOST_PASSWORD")
+REMEMBER_WEB_COOKIE = os.environ.get("REMEMBER_WEB_COOKIE")
+SERVER_URL = os.environ.get("WEIRDHOST_SERVER_URL")
 
-os.makedirs(SCREENSHOT_DIR, exist_ok=True)
+os.makedirs("screenshots", exist_ok=True)
 
 def screenshot(sb, filename):
-    path = f"{SCREENSHOT_DIR}/{filename}"
+    path = os.path.join("screenshots", filename)
     sb.save_screenshot(path)
     print(f"📸 Screenshot saved: {path}")
 
-def main():
-    print("Weirdhost 自动续期脚本启动 ===\n")
-    print("=== 启动 Xvfb + UC 模式 ===\n")
+def wait_page_loaded(sb, timeout=30):
+    sb.wait_for_ready_state_complete(timeout=timeout)
 
-    with SB(uc=True, locale="en", test=True, headless=True) as sb:
+def click_renew_button(sb):
+    print("🕒 尝试寻找 Renew 按钮...")
+
+    renew_xpaths = [
+        "//button[contains(., '시간 추가')]",
+        "//button[contains(., 'Renew')]",
+        "//button[contains(., 'Extend')]",
+        "//button[contains(., 'Add time')]",
+    ]
+
+    for xp in renew_xpaths:
         try:
-            # ================= Cookie 登录 =================
-            cookie_value = os.environ.get("WEIRDHOST_COOKIE")
-            if cookie_value:
-                print("🔐 尝试使用 Cookie 登录...")
-                sb.open("https://hub.weirdhost.xyz")  # 先打开域名主页
+            sb.wait_for_element_visible(f"xpath={xp}", timeout=5)
+            sb.scroll_to(f"xpath={xp}")
+            sb.click(f"xpath={xp}")
+            print(f"✅ 找到按钮: {xp}")
+            return True
+        except:
+            pass
+
+    return False
+
+def main():
+    print("Weirdhost 自动续期脚本启动 ===")
+
+    try:
+        with SB(uc=True, locale="en", test=True) as sb:
+
+            print("🚀 浏览器启动")
+
+            sb.set_window_size(1920, 1080)
+
+            # --- Cookie 登录 ---
+            if REMEMBER_WEB_COOKIE:
+                print("🔐 Cookie 登录")
+
+                sb.open("https://hub.weirdhost.xyz")
+                wait_page_loaded(sb)
+
                 sb.add_cookie({
-                    "name": COOKIE_NAME,
-                    "value": cookie_value,
+                    "name": "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d",
+                    "value": REMEMBER_WEB_COOKIE,
                     "domain": "hub.weirdhost.xyz",
                     "path": "/",
                     "secure": True,
                     "httpOnly": True,
-                    "sameSite": "Lax",
                 })
+
                 sb.refresh()
-                print("✅ Cookie 添加成功")
-            else:
-                print("⚠️ 未提供 Cookie，回退邮箱密码登录")
-                sb.open("https://hub.weirdhost.xyz/auth/login")
-                sb.wait_for_element_visible("input[name='username']", timeout=30)
-                sb.type("input[name='username']", EMAIL)
-                sb.type("input[name='password']", PASSWORD)
-                sb.click("button[type='submit']")
-                time.sleep(5)
-            
-            # ================= 打开服务器页面 =================
+                wait_page_loaded(sb)
+
+            # --- 打开服务器页面 ---
             sb.open(SERVER_URL)
-            print("🌐 服务器页面打开")
-            time.sleep(8)  # 等待 JS 渲染
+            wait_page_loaded(sb)
+            time.sleep(3)
+
             screenshot(sb, "server_page.png")
 
-            # ================= 打开 Renew Modal =================
-            try:
-                print("🕒 尝试打开 Renew Modal...")
-                sb.wait_for_element_visible("button:has-text('시간 추가')", timeout=30)
-                sb.click("button:has-text('시간 추가')")
-                time.sleep(2)
-                screenshot(sb, "modal_open.png")
-            except Exception as e:
-                print(f"❌ 打开 Modal 失败: {e}")
+            # --- 点击续期 ---
+            if not click_renew_button(sb):
+                print("❌ 未找到续期按钮")
                 screenshot(sb, "modal_open_fail.png")
                 return
 
-            # ================= 处理 CF / Turnstile 盾 =================
+            time.sleep(2)
+            screenshot(sb, "01_modal_open.png")
+
+            # --- Turnstile ---
             try:
-                print("☑️ 尝试点击盾确认...")
+                print("☑️ 处理 Cloudflare")
                 sb.uc_gui_click_captcha()
-                time.sleep(4)
+                time.sleep(5)
+                screenshot(sb, "02_after_captcha.png")
             except Exception as e:
-                print(f"⚠️ 盾确认失败或未找到: {e}")
-            screenshot(sb, "after_captcha.png")
+                print("⚠️ captcha 可能未出现:", e)
 
-            # ================= 检查 CF Cookie =================
+            # --- 检查 cf_clearance ---
             cookies = sb.get_cookies()
-            cf_clearance = next((c["value"] for c in cookies if c["name"] == "cf_clearance"), None)
-            print("🧩 cf_clearance:", cf_clearance)
-            if not cf_clearance:
-                screenshot(sb, "no_cf_clearance.png")
-                print("❌ 未获取 cf_clearance（Cloudflare 可能未放行）")
+            cf = next((c["value"] for c in cookies if c["name"] == "cf_clearance"), None)
 
-            # ================= 提交 Renew =================
+            if not cf:
+                print("❌ 未通过 Cloudflare")
+                screenshot(sb, "03_no_cf_clearance.png")
+                return
+
+            print("✅ Cloudflare 已通过")
+
+            # --- 提交续期 ---
             try:
-                sb.execute_script("document.querySelector('#renew-modal form').submit();")
+                sb.execute_script("""
+                document.querySelector('#renew-modal form')?.submit()
+                """)
                 time.sleep(3)
-                screenshot(sb, "after_submit.png")
-                print("ℹ️ 已尝试提交续期（结果需以后端为准）")
+                screenshot(sb, "04_after_submit.png")
+                print("🚀 已提交续期")
             except Exception as e:
-                print(f"❌ 提交续期失败: {e}")
-                screenshot(sb, "submit_fail.png")
+                print("❌ 提交失败:", e)
 
-            print("\n任务完成。浏览器关闭。")
-
-        except Exception as e:
-            print(f"❌ 运行异常: {e}")
-            screenshot(sb, "general_error.png")
+    except Exception as e:
+        print("❌ 运行异常:", e)
 
 if __name__ == "__main__":
     main()
