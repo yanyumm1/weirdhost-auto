@@ -37,6 +37,7 @@ jobs:
           WEIRDHOST_EMAIL: ${{ secrets.WEIRDHOST_EMAIL }}
           WEIRDHOST_PASSWORD: ${{ secrets.WEIRDHOST_PASSWORD }}
           REMEMBER_WEB_COOKIE: ${{ secrets.REMEMBER_WEB_COOKIE }}
+          WEIRDHOST_SERVER_URL: ${{ secrets.WEIRDHOST_SERVER_URL }}
         run: |
           mkdir -p screenshots
           xvfb-run -a python main.py
