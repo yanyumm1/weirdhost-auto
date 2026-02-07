@@ -19,137 +19,152 @@ os.makedirs("screenshots", exist_ok=True)
 # =========================
 def screenshot(sb, name):
     path = f"screenshots/{name}"
-    sb.save_screenshot(path)
-    print(f"📸 Screenshot saved: {path}")
+    try:
+        sb.save_screenshot(path)
+        print(f"📸 Screenshot saved: {path}")
+    except Exception as e:
+        print(f"⚠️ Screenshot failed: {e}")
 
-def sleep(a=2, b=4):
+def human_sleep(a=1.2, b=2.8):
     time.sleep(random.uniform(a, b))
 
-def wait_loaded(sb):
+def wait_react_loaded(sb):
     sb.wait_for_ready_state_complete(timeout=30)
-    sleep(2, 3)
+    human_sleep(2, 3)
 
-def scroll_container(sb):
-    """滚动页面底部，确保按钮可见"""
-    sb.execute_script("""
-    (() => {
-        const els = [
-            document.querySelector("main"),
-            document.querySelector('[role="main"]'),
-            document.querySelector(".content"),
-            document.querySelector("#root")
-        ].filter(Boolean);
-
-        els.forEach(el => el.scrollTo(0, el.scrollHeight));
-    })();
-    """)
-    sleep(2, 3)
-
-# =========================
-# Cloudflare 判断
-# =========================
-def cf_cookie_present(sb):
+def human_scroll(sb):
     try:
-        return any(
-            c["name"] in ("cf_clearance", "__cf_bm")
-            for c in sb.get_cookies()
-        )
+        sb.execute_script("window.scrollTo(0, document.body.scrollHeight * 0.25)")
+        human_sleep(1.5, 2.5)
+        sb.execute_script("window.scrollTo(0, document.body.scrollHeight * 0.55)")
+        human_sleep(1.5, 2.5)
+        sb.execute_script("window.scrollTo(0, 0)")
+        human_sleep(1.0, 2.0)
     except Exception:
-        return False
+        pass
 
-def wait_cf_pass(sb, timeout=120):
-    print("🛡️ 等待 Cloudflare Turnstile 放行")
-    start = time.time()
-    while time.time() - start < timeout:
-        if cf_cookie_present(sb):
-            print("✅ CF Cookie 已生成")
-            return True
-
-        iframe_done = sb.execute_script("""
-        (() => {
-            const f = [...document.querySelectorAll("iframe")]
-              .filter(i => (i.src || "").includes("challenges.cloudflare.com"));
-            if (f.length === 0) return false;
-            return f.some(i => i.style.display === "none");
-        })();
+def remove_ads(sb):
+    try:
+        sb.execute_script("""
+        document.querySelectorAll("iframe").forEach(f=>{
+            const src = String(f.src || "");
+            if (!src.includes("challenges.cloudflare.com")) {
+                f.remove();
+            }
+        });
         """)
-        if iframe_done:
-            print("✅ CF iframe 已释放")
-            return True
-
-        time.sleep(1)
-
-    print("❌ CF 超时")
-    return False
+    except Exception:
+        pass
 
 # =========================
-# Renew / 시간 추가 按钮
+# Renew / 시간 추가
 # =========================
 def click_time_add(sb):
     print("🖱️ 尝试点击 시간 추가 按钮")
-    # 先滚动
-    sb.execute_script("window.scrollTo(0, document.body.scrollHeight * 0.5)")
-    sleep(1, 2)
-
-    # XPath: button 内含 span 且文本包含 시간 추가
-    xpath_candidates = [
+    selectors = [
         '//button[span[contains(text(), "시간 추가")]]',
-        '//button[contains(text(), "시간 추가")]'
+        '//button[contains(text(), "Renew")]'
     ]
-
-    for xp in xpath_candidates:
+    for sel in selectors:
         try:
-            sb.wait_for_element_visible(xp, timeout=8)
-            sb.scroll_to(xp)
-            sleep(0.5, 1.0)
-            sb.click(xp)
-            print(f"✅ 点击成功: {xp}")
+            sb.wait_for_element_visible(sel, timeout=12)
+            sb.scroll_to(sel)
+            human_sleep()
+            sb.click(sel)
+            print(f"✅ 点击成功: {sel}")
             return True
         except Exception:
             continue
+    return False
 
-    print("❌ 시간 추가 按钮未找到")
+# =========================
+# Turnstile 验证
+# =========================
+def solve_turnstile(sb, timeout=120):
+    print("🛡️ 等待 Cloudflare Turnstile 放行 ...")
+    start = time.time()
+
+    while time.time() - start < timeout:
+        try:
+            # 已经有 CF cookie
+            cookies = sb.get_cookies()
+            if any(c["name"] in ("cf_clearance", "__cf_bm") for c in cookies):
+                print("✅ CF Cookie 已存在，Turnstile 放行")
+                return True
+
+            # iframe 检查
+            iframe_ok = sb.execute_script("""
+            (() => {
+                const frames = [...document.querySelectorAll("iframe")]
+                  .filter(f => (f.src || "").includes("challenges.cloudflare.com"));
+                if (frames.length === 0) return true;
+                return frames.some(f => f.style.display === "none");
+            })();
+            """)
+            if iframe_ok:
+                print("✅ Turnstile iframe 已释放")
+                return True
+
+            # 尝试 UC 点击勾选
+            try:
+                sb.uc_gui_click_captcha()
+                print("🖱️ 尝试点击 Turnstile 勾选")
+            except Exception:
+                pass
+
+        except Exception:
+            pass
+        time.sleep(1)
+
+    print("❌ CF 超时未通过")
     return False
 
 # =========================
 # NEXT / 다음
 # =========================
-def wait_next(sb, timeout=60):
-    print("⏳ 等待 NEXT / 다음 按钮")
+def wait_next_button(sb, timeout=60):
+    print("⏳ 等待 NEXT / 다음 按钮 ...")
     start = time.time()
     while time.time() - start < timeout:
-        found = sb.execute_script("""
-        (() => {
-            return [...document.querySelectorAll("button, [role='button']")]
-              .some(el => {
-                const t = (el.innerText || "").toLowerCase();
-                return el.offsetParent && (t.includes("next") || t.includes("다음"));
-              });
-        })();
-        """)
-        if found:
-            print("✅ NEXT 出现")
-            return True
+        try:
+            found = sb.execute_script("""
+            (() => {
+                return [...document.querySelectorAll("button, [role='button']")]
+                  .some(el => el.offsetParent && 
+                      (el.innerText.toLowerCase().includes("next") ||
+                       el.innerText.includes("다음")));
+            })();
+            """)
+            if found:
+                print("✅ NEXT 已出现")
+                return True
+        except Exception:
+            pass
         time.sleep(1)
     return False
 
-def click_next(sb):
-    clicked = sb.execute_script("""
-    (() => {
-        for (const el of document.querySelectorAll("button, [role='button']")) {
-            const t = (el.innerText || "").toLowerCase();
-            if (el.offsetParent && (t.includes("next") || t.includes("다음"))) {
-                el.scrollIntoView({block:"center"});
-                el.click();
-                return true;
+def click_next_button(sb):
+    try:
+        clicked = sb.execute_script("""
+        (() => {
+            for (const el of document.querySelectorAll("button, [role='button']")) {
+                if (!el.offsetParent) continue;
+                const t = (el.innerText || "").toLowerCase();
+                if (t.includes("next") || t.includes("다음")) {
+                    el.scrollIntoView({block:"center"});
+                    el.click();
+                    return true;
+                }
             }
-        }
-        return false;
-    })();
-    """)
-    if clicked:
-        print("✅ NEXT 点击成功")
-    return clicked
+            return false;
+        })();
+        """)
+        if clicked:
+            print("✅ NEXT 点击成功")
+            return True
+    except Exception:
+        pass
+    return False
 
 # =========================
 # 主流程
@@ -162,18 +177,18 @@ def main():
 
     with SB(
         uc=True,
-        headless=False,
         locale="en",
-        chromium_arg="--start-maximized --window-size=1920,1080"
+        headless=False,
+        chromium_arg="--window-size=1920,1080"
     ) as sb:
 
-        # 打开主站
-        sb.uc_open_with_reconnect("https://hub.weirdhost.xyz", 5)
-        wait_loaded(sb)
+        # 打开 Weirdhost
+        sb.uc_open_with_reconnect("https://hub.weirdhost.xyz", reconnect_time=5)
+        wait_react_loaded(sb)
 
         # Cookie 登录
         if REMEMBER_WEB_COOKIE:
-            print("🍪 注入 Cookie")
+            print("🍪 注入 Cookie 登录")
             sb.add_cookie({
                 "name": "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d",
                 "value": REMEMBER_WEB_COOKIE,
@@ -183,44 +198,37 @@ def main():
                 "httpOnly": True,
             })
             sb.refresh()
-            wait_loaded(sb)
+            wait_react_loaded(sb)
 
         # 打开服务器页面
-        sb.uc_open_with_reconnect(SERVER_URL, 5)
-        wait_loaded(sb)
+        print(f"📦 打开服务器页面: {SERVER_URL}")
+        sb.uc_open_with_reconnect(SERVER_URL, reconnect_time=5)
+        wait_react_loaded(sb)
+        remove_ads(sb)
+        human_scroll(sb)
         screenshot(sb, "01_server_page.png")
 
-        # ⭐ 第一次点击：真正触发 CF
+        # 点击 시간 추가
         if not click_time_add(sb):
             screenshot(sb, "renew_not_found.png")
             raise Exception("❌ 时间追加按钮未找到")
         screenshot(sb, "02_after_first_click.png")
 
-        # 等 CF
-        sleep(1, 2)
-        try:
-            sb.uc_gui_click_captcha()  # 尝试点击 CF
-        except Exception:
-            pass
-
-        if not wait_cf_pass(sb):
+        # 处理 CF Turnstile
+        if not solve_turnstile(sb):
             screenshot(sb, "cf_failed.png")
             raise Exception("❌ Cloudflare 未通过")
         screenshot(sb, "03_cf_passed.png")
 
-        # ⭐ 第二次点击：完成续期
-        if not click_time_add(sb):
-            screenshot(sb, "renew_second_fail.png")
-            raise Exception("❌ 时间追加按钮第二次点击失败")
-        screenshot(sb, "04_after_second_click.png")
-
-        # 等 NEXT
-        if not wait_next(sb):
+        # 点击 NEXT / 다음
+        if not wait_next_button(sb):
             screenshot(sb, "no_next.png")
             raise Exception("❌ NEXT 未出现")
-        click_next(sb)
-        sleep(5, 8)
-        screenshot(sb, "05_done.png")
+        if not click_next_button(sb):
+            screenshot(sb, "next_click_fail.png")
+            raise Exception("❌ NEXT 点击失败")
+        human_sleep(6, 10)
+        screenshot(sb, "04_done.png")
 
         print("🎉 Weirdhost 自动续期完成")
 
