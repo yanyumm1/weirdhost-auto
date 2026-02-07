@@ -1,17 +1,13 @@
 name: Weirdhost Auto Renew
 
 on:
-  # ⏰ 定时运行
   schedule:
     - cron: "10 18 * * *"
-
-  # ▶️ 手动运行
   workflow_dispatch:
-
-  # 🔄 main.py 变更自动运行
   push:
     paths:
       - "main.py"
+      - "requirements.txt"
 
 jobs:
   renew:
@@ -19,15 +15,23 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      # =========================
+      # Checkout
+      # =========================
       - name: 📥 Checkout repo
         uses: actions/checkout@v4
 
+      # =========================
+      # Python
+      # =========================
       - name: 🐍 Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      # -------- 修复字体 / GUI 依赖 --------
+      # =========================
+      # System deps (Chrome / GUI)
+      # =========================
       - name: 🖥️ Install system dependencies
         run: |
           sudo apt-get update
@@ -37,13 +41,29 @@ jobs:
             fonts-noto-color-emoji \
             libgtk-3-0 \
             libgbm1 \
-            libasound2-plugins
+            libasound2-plugins \
+            libnss3 \
+            libxss1 \
+            libxtst6
 
+      # =========================
+      # Python deps (关键修复点)
+      # =========================
       - name: 📦 Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install seleniumbase
+          pip install -r requirements.txt
 
+      # =========================
+      # Playwright browser
+      # =========================
+      - name: 🎭 Install Playwright Chromium
+        run: |
+          playwright install chromium
+
+      # =========================
+      # Run script
+      # =========================
       - name: 🚀 Run Weirdhost renew script
         env:
           REMEMBER_WEB_COOKIE: ${{ secrets.REMEMBER_WEB_COOKIE }}
@@ -52,6 +72,9 @@ jobs:
           mkdir -p screenshots
           xvfb-run -a python main.py
 
+      # =========================
+      # Artifacts
+      # =========================
       - name: 📸 Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
