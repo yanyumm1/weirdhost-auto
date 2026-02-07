@@ -17,8 +17,8 @@ SCREENSHOT_DIR.mkdir(exist_ok=True)
 SERVER_URL = os.environ.get("WEIRDHOST_SERVER_URL")
 REMEMBER_WEB_COOKIE = os.environ.get("REMEMBER_WEB_COOKIE")
 
-TIMEOUT_WAIT_CF = 60  # 等待 Cloudflare JS 完成的最长秒数
-RETRY_REFRESH_INTERVAL = 5  # 每次尝试刷新间隔（秒）
+TIMEOUT_WAIT_CF = 60  # 等待 Cloudflare Turnstile 完成最长秒数
+RETRY_INTERVAL = 2     # 每次尝试间隔（秒）
 
 # =================================================
 # 工具函数
@@ -83,6 +83,37 @@ def click_time_add(sb: SB) -> bool:
     print("⚠️ 시간 추가 / Renew 按钮未找到")
     return False
 
+def _wait_turnstile(sb: SB, timeout: int = TIMEOUT_WAIT_CF) -> bool:
+    """
+    等待 Turnstile 验证完成：弹窗消失或 cf_clearance 下发
+    """
+    start = time.time()
+    while time.time() - start < timeout:
+        # 尝试点击 Turnstile
+        try:
+            sb.uc_gui_click_captcha()
+        except Exception:
+            pass
+
+        human_sleep(1.0, 2.0)
+
+        # 检查弹窗是否还存在
+        try:
+            popup_visible = sb.is_element_visible("//div[contains(@class,'renew-popup')]")
+        except Exception:
+            popup_visible = False
+
+        if not popup_visible:
+            print("✅ Turnstile 弹窗已消失")
+            return True
+
+        # 检查 cf_clearance
+        if _has_cf_clearance(sb):
+            return True
+
+    print("⚠️ Turnstile 验证超时")
+    return False
+
 def setup_xvfb():
     if platform.system().lower() == "linux" and not os.environ.get("DISPLAY"):
         try:
@@ -140,51 +171,26 @@ def main():
             human_sleep(2, 3)
             screenshot(sb, "01_server_page.png")
 
-            # -------------------------------
             # 点击 시간 추가 / Renew 按钮
-            # -------------------------------
             if not click_time_add(sb):
                 screenshot(sb, "renew_not_found.png")
                 raise Exception("❌ 시간 추가 / Renew 按钮未找到")
-
             screenshot(sb, "02_after_click.png")
 
-            # -------------------------------
-            # 等待 Turnstile / Cloudflare 完成
-            # -------------------------------
+            # 等待弹窗 / Turnstile 验证
             print("⏳ 等待 Turnstile / Cloudflare 验证...")
-            start = time.time()
-            while time.time() - start < TIMEOUT_WAIT_CF:
-                human_sleep(1.0, 2.0)
-                # cf_clearance 下发或者按钮消失都认为完成
-                if _has_cf_clearance(sb):
-                    break
-                try:
-                    # 检查按钮是否消失
-                    if not sb.is_element_visible('//button[span[contains(text(), "시간 추가")]]'):
-                        print("⏳ 시간 추가 按钮已消失，可能续期成功")
-                        break
-                except Exception:
-                    pass
-            else:
-                print("⚠️ Cloudflare 验证超时")
+            if not _wait_turnstile(sb):
                 screenshot(sb, "cf_failed.png")
                 raise Exception("❌ Cloudflare 验证未通过")
 
-            # -------------------------------
-            # 等待页面更新 Expiry（可选，确保续期成功）
-            # -------------------------------
-            human_sleep(2, 3)
-
-            # -------------------------------
-            # 完成截图
-            # -------------------------------
+            # 完成
             screenshot(sb, "03_done.png")
             print("🎉 自动续期流程完成")
 
     finally:
         if display:
             display.stop()
+
 
 if __name__ == "__main__":
     main()
