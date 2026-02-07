@@ -137,60 +137,12 @@ def solve_turnstile(sb, timeout=120):
         except Exception:
             pass
 
-        # 每次等待 2 秒，最多重试 3 次
         if attempt % 3 == 0:
             screenshot(sb, f"cf_attempt_{attempt}.png")
         time.sleep(2)
 
     screenshot(sb, "cf_failed_timeout.png")
     print("❌ CF 超时未通过")
-    return False
-
-# =========================
-# NEXT / 다음
-# =========================
-def wait_next_button(sb, timeout=60):
-    print("⏳ 等待 NEXT / 다음 按钮 ...")
-    start = time.time()
-    while time.time() - start < timeout:
-        try:
-            found = sb.execute_script("""
-            (() => {
-                return [...document.querySelectorAll("button, [role='button']")]
-                  .some(el => el.offsetParent && 
-                      (el.innerText.toLowerCase().includes("next") ||
-                       el.innerText.includes("다음")));
-            })();
-            """)
-            if found:
-                print("✅ NEXT 已出现")
-                return True
-        except Exception:
-            pass
-        time.sleep(1)
-    return False
-
-def click_next_button(sb):
-    try:
-        clicked = sb.execute_script("""
-        (() => {
-            for (const el of document.querySelectorAll("button, [role='button']")) {
-                if (!el.offsetParent) continue;
-                const t = (el.innerText || "").toLowerCase();
-                if (t.includes("next") || t.includes("다음")) {
-                    el.scrollIntoView({block:"center"});
-                    el.click();
-                    return true;
-                }
-            }
-            return false;
-        })();
-        """)
-        if clicked:
-            print("✅ NEXT 点击成功")
-            return True
-    except Exception:
-        pass
     return False
 
 # =========================
@@ -249,13 +201,6 @@ def main():
                 raise Exception("❌ Cloudflare 未通过")
             screenshot(sb, "03_cf_passed.png")
 
-            # 点击 NEXT / 다음
-            if not wait_next_button(sb):
-                screenshot(sb, "no_next.png")
-                raise Exception("❌ NEXT 未出现")
-            if not click_next_button(sb):
-                screenshot(sb, "next_click_fail.png")
-                raise Exception("❌ NEXT 点击失败")
             human_sleep(6, 10)
             screenshot(sb, "04_done.png")
 
