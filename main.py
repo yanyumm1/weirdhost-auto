@@ -8,15 +8,27 @@ def ensure_screenshot_dir():
 
 
 def wait_for_turnstile(page, timeout=60000):
-    print("检测是否出现 Cloudflare Turnstile 验证...")
+    print("检测 Cloudflare Turnstile...")
 
     try:
-        page.wait_for_selector('iframe[src*="turnstile"]', timeout=10000)
-        print("检测到 Turnstile 小组件，等待验证通过...")
+        iframe = page.frame_locator('iframe[src*="turnstile"]')
+
+        # 等待 iframe 出现
+        iframe.locator("body").wait_for(timeout=15000)
+        print("检测到 Turnstile，尝试点击验证...")
+
+        try:
+            # 点击验证框
+            iframe.locator("div").first.click(timeout=5000)
+            print("已尝试点击 Turnstile 验证框")
+        except:
+            print("验证框可能无需点击或已自动验证")
+
     except PlaywrightTimeoutError:
-        print("未检测到 Turnstile，可能无需验证。")
+        print("未检测到 Turnstile")
         return True
 
+    # ===== 等待 token =====
     try:
         page.wait_for_function("""
             () => {
@@ -25,12 +37,12 @@ def wait_for_turnstile(page, timeout=60000):
             }
         """, timeout=timeout)
 
-        print("✅ Turnstile 验证已通过")
+        print("✅ Turnstile 验证通过")
         return True
 
     except PlaywrightTimeoutError:
-        print("❌ Turnstile 验证超时")
-        page.screenshot(path="screenshots/turnstile_timeout.png")
+        print("❌ Turnstile 验证失败")
+        page.screenshot(path="screenshots/turnstile_failed.png")
         return False
 
 
@@ -44,7 +56,10 @@ def add_server_time(server_url="https://hub.weirdhost.xyz/server/a79a2b26"):
 
     with sync_playwright() as p:
 
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(
+    headless=True,
+    args=["--disable-blink-features=AutomationControlled"]
+)
         page = browser.new_page()
         page.set_default_timeout(90000)
 
