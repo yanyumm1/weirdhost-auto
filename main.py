@@ -32,6 +32,7 @@ def wait_react_loaded(sb):
     sb.wait_for_ready_state_complete(timeout=30)
     human_sleep(2, 3)
 
+# 删除广告 iframe（保留 CF）
 def remove_ads(sb):
     try:
         sb.execute_script("""
@@ -62,13 +63,15 @@ def setup_xvfb():
 # =========================
 def click_time_add(sb):
     print("🖱️ 尝试点击 시간 추가 按钮")
+
     selectors = [
-        '//button[span[contains(text(), "시간 추가")]]',
-        '//button[contains(text(), "Renew")]'
+        '//button[span[contains(text(),"시간 추가")]]',
+        '//button[contains(text(),"Renew")]'
     ]
+
     for sel in selectors:
         try:
-            sb.wait_for_element_visible(sel, timeout=12)
+            sb.wait_for_element_visible(sel, timeout=15)
             sb.scroll_to(sel)
             human_sleep()
             sb.click(sel)
@@ -76,65 +79,77 @@ def click_time_add(sb):
             return True
         except Exception:
             continue
+
     return False
 
 # =========================
-# ⭐ Turnstile 坐标点击核心
+# ⭐ Turnstile token 检测
+# =========================
+def turnstile_passed(sb):
+    try:
+        val = sb.execute_script("""
+            const el = document.querySelector('input[name="cf-turnstile-response"]');
+            return el ? el.value : null;
+        """)
+        if val and len(val) > 0:
+            return True
+
+        cookies = sb.get_cookies()
+        if any(c["name"] == "cf_clearance" for c in cookies):
+            return True
+
+        return False
+    except Exception:
+        return False
+
+# =========================
+# ⭐ Turnstile 坐标点击
 # =========================
 def click_turnstile_checkbox(sb):
+
     rect = sb.execute_script("""
     const f = document.querySelector("iframe[src*='challenges.cloudflare.com']");
     if (!f) return null;
 
+    f.scrollIntoView({block:"center"});
+
     // 修复样式
-    f.style.display = "block";
-    f.style.visibility = "visible";
-    f.style.pointerEvents = "auto";
+    f.style.display="block";
+    f.style.visibility="visible";
+    f.style.pointerEvents="auto";
+    f.style.opacity="1";
 
     const r = f.getBoundingClientRect();
-    return {x:r.x, y:r.y, w:r.width, h:r.height};
+    return {x:r.x,y:r.y,w:r.width,h:r.height};
     """)
 
     if not rect:
         return False
 
-    # 中心点 + 随机偏移
     x = rect["x"] + rect["w"] * (0.45 + random.random()*0.1)
     y = rect["y"] + rect["h"] * (0.45 + random.random()*0.1)
 
-    print(f"🖱️ Turnstile 点击坐标: {x:.1f}, {y:.1f}")
+    print(f"🖱️ Turnstile 点击坐标: {x:.1f},{y:.1f}")
 
     try:
         sb.uc_gui_click_x_y(x, y)
         return True
-    except Exception:
-        return False
-
-# =========================
-# ⭐ Turnstile 通过检测
-# =========================
-def turnstile_passed(sb):
-    try:
-        cookies = sb.get_cookies()
-        if any(c["name"] == "cf_clearance" for c in cookies):
-            return True
-
-        iframe_exist = sb.execute_script("""
-        return document.querySelector("iframe[src*='challenges.cloudflare.com']") !== null;
-        """)
-        return not iframe_exist
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ Turnstile 点击失败: {e}")
         return False
 
 # =========================
 # ⭐ Turnstile 主流程
 # =========================
-def solve_turnstile(sb, timeout=120):
+def solve_turnstile(sb, timeout=180):
+
     print("🛡️ 处理 Cloudflare Turnstile ...")
+
     start = time.time()
     attempt = 0
 
     while time.time() - start < timeout:
+
         attempt += 1
 
         if turnstile_passed(sb):
@@ -144,7 +159,7 @@ def solve_turnstile(sb, timeout=120):
         if click_turnstile_checkbox(sb):
             print(f"👉 已尝试点击 Turnstile ({attempt})")
 
-        if attempt % 2 == 0:
+        if attempt % 5 == 0:
             screenshot(sb, f"cf_attempt_{attempt}.png")
 
         human_sleep(2, 3)
@@ -156,7 +171,8 @@ def solve_turnstile(sb, timeout=120):
 # 主流程
 # =========================
 def main():
-    print("🚀 Weirdhost 自动续期（强化 Turnstile 自动点击）")
+
+    print("🚀 Weirdhost 自动续期（UC + 强化 Turnstile）")
 
     if not SERVER_URL:
         raise Exception("❌ WEIRDHOST_SERVER_URL 未设置")
@@ -168,11 +184,19 @@ def main():
             uc=True,
             locale="en",
             headless=False,
+
+            # ⭐ 等价 Playwright args
+            chromium_arg="--no-sandbox",
+            chromium_arg="--disable-blink-features=AutomationControlled",
             chromium_arg="--window-size=1920,1080"
+
         ) as sb:
 
             # 首页
-            sb.uc_open_with_reconnect("https://hub.weirdhost.xyz", reconnect_time=5)
+            sb.uc_open_with_reconnect(
+                "https://hub.weirdhost.xyz",
+                reconnect_time=5
+            )
             wait_react_loaded(sb)
 
             # Cookie 登录
@@ -189,15 +213,16 @@ def main():
                 sb.refresh()
                 wait_react_loaded(sb)
 
-            # 打开服务器
+            # 打开服务器页
             print(f"📦 打开服务器页面: {SERVER_URL}")
+
             sb.uc_open_with_reconnect(SERVER_URL, reconnect_time=5)
             wait_react_loaded(sb)
             remove_ads(sb)
 
             screenshot(sb, "01_server_page.png")
 
-            # 点击时间追加
+            # 点击续期
             if not click_time_add(sb):
                 screenshot(sb, "renew_not_found.png")
                 raise Exception("❌ 时间追加按钮未找到")
