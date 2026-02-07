@@ -34,7 +34,7 @@ def wait_for_turnstile(page, timeout=60000):
         return False
 
 
-def add_server_time(server_url="https://hub.weirdhost.xyz/server/a36fc168"):
+def add_server_time(server_url="https://hub.weirdhost.xyz/server/a79a2b26"):
 
     ensure_screenshot_dir()
 
