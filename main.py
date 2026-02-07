@@ -17,8 +17,7 @@ SCREENSHOT_DIR.mkdir(exist_ok=True)
 SERVER_URL = os.environ.get("WEIRDHOST_SERVER_URL")
 REMEMBER_WEB_COOKIE = os.environ.get("REMEMBER_WEB_COOKIE")
 
-TIMEOUT_WAIT_CF = 60  # 等待 Cloudflare Turnstile 完成最长秒数
-RETRY_INTERVAL = 2     # 每次尝试间隔（秒）
+TIMEOUT_WAIT_CF = 60  # 等待 Cloudflare JS / Turnstile 完成的最长秒数
 
 # =================================================
 # 工具函数
@@ -35,6 +34,9 @@ def screenshot(sb, name: str):
         print(f"⚠️ Screenshot failed: {e}")
 
 def _has_cf_clearance(sb: SB) -> bool:
+    """
+    检查 cf_clearance 是否存在（用于判断 Cloudflare 是否放行）
+    """
     try:
         cookies = sb.get_cookies()
         cf_clearance = next((c["value"] for c in cookies if c.get("name") == "cf_clearance"), None)
@@ -44,6 +46,9 @@ def _has_cf_clearance(sb: SB) -> bool:
         return False
 
 def _robust_click(sb: SB, sel: str, tries: int = 3, sleep_s: float = 0.5) -> bool:
+    """
+    更稳的点击函数：滚动 + 尝试 JS click 兜底
+    """
     last_err = None
     for t in range(1, tries + 1):
         try:
@@ -68,6 +73,9 @@ def _robust_click(sb: SB, sel: str, tries: int = 3, sleep_s: float = 0.5) -> boo
     return False
 
 def click_time_add(sb: SB) -> bool:
+    """
+    点击 Weirdhost “시간 추가” 按钮（或 Renew）
+    """
     selectors = [
         '//button[span[contains(text(), "시간 추가")]]',
         '//button[contains(text(), "Renew")]'
@@ -83,38 +91,8 @@ def click_time_add(sb: SB) -> bool:
     print("⚠️ 시간 추가 / Renew 按钮未找到")
     return False
 
-def _wait_turnstile(sb: SB, timeout: int = TIMEOUT_WAIT_CF) -> bool:
-    """
-    等待 Turnstile 验证完成：弹窗消失或 cf_clearance 下发
-    """
-    start = time.time()
-    while time.time() - start < timeout:
-        # 尝试点击 Turnstile
-        try:
-            sb.uc_gui_click_captcha()
-        except Exception:
-            pass
-
-        human_sleep(1.0, 2.0)
-
-        # 检查弹窗是否还存在
-        try:
-            popup_visible = sb.is_element_visible("//div[contains(@class,'renew-popup')]")
-        except Exception:
-            popup_visible = False
-
-        if not popup_visible:
-            print("✅ Turnstile 弹窗已消失")
-            return True
-
-        # 检查 cf_clearance
-        if _has_cf_clearance(sb):
-            return True
-
-    print("⚠️ Turnstile 验证超时")
-    return False
-
 def setup_xvfb():
+    """Linux 下启用虚拟显示"""
     if platform.system().lower() == "linux" and not os.environ.get("DISPLAY"):
         try:
             from pyvirtualdisplay import Display
@@ -127,6 +105,47 @@ def setup_xvfb():
             print("请安装 pyvirtualdisplay 和 xvfb")
             return None
     return None
+
+def _wait_cloudflare_pass(sb: SB, timeout: int = TIMEOUT_WAIT_CF) -> bool:
+    """
+    等待 Cloudflare Turnstile / JS challenge 完成：
+    1. 轮询 cf-turnstile-response hidden input
+    2. 若存在 iframe，可尝试自动点击
+    3. 最终确认 cf_clearance cookie 下发
+    """
+    start = time.time()
+    while time.time() - start < timeout:
+        # 1) 检查 hidden input 是否有 Turnstile 响应
+        try:
+            resp = sb.get_attribute("#cf-chl-widget-rjtfc_response", "value")
+            if resp and resp.strip():
+                print("✅ Turnstile hidden input 已填入")
+                return True
+        except Exception:
+            pass
+
+        # 2) 检查 cf_clearance cookie
+        if _has_cf_clearance(sb):
+            return True
+
+        # 3) 尝试点击弹窗里的 iframe Turnstile（兜底）
+        try:
+            iframe_sel = "iframe[src*='turnstile']"
+            if sb.is_element_visible(iframe_sel):
+                sb.switch_to_frame(iframe_sel)
+                # 尝试点击中间的复选框
+                click_sel = "div[class*='checkbox'], div[class*='challenge']"
+                if sb.is_element_visible(click_sel):
+                    _robust_click(sb, click_sel)
+                    print("🖱️ Turnstile iframe 点击尝试")
+                sb.switch_to_default_content()
+        except Exception as e:
+            pass
+
+        human_sleep(1.0, 2.0)
+
+    print("⚠️ Cloudflare Turnstile 超时")
+    return False
 
 # =================================================
 # 主流程
@@ -171,26 +190,32 @@ def main():
             human_sleep(2, 3)
             screenshot(sb, "01_server_page.png")
 
+            # -------------------------------
             # 点击 시간 추가 / Renew 按钮
+            # -------------------------------
             if not click_time_add(sb):
                 screenshot(sb, "renew_not_found.png")
                 raise Exception("❌ 시간 추가 / Renew 按钮未找到")
+
             screenshot(sb, "02_after_click.png")
 
-            # 等待弹窗 / Turnstile 验证
+            # -------------------------------
+            # 等待弹窗 / Turnstile / Cloudflare challenge 放行
+            # -------------------------------
             print("⏳ 等待 Turnstile / Cloudflare 验证...")
-            if not _wait_turnstile(sb):
+            if not _wait_cloudflare_pass(sb, timeout=TIMEOUT_WAIT_CF):
                 screenshot(sb, "cf_failed.png")
                 raise Exception("❌ Cloudflare 验证未通过")
 
-            # 完成
+            # -------------------------------
+            # 完成截图
+            # -------------------------------
             screenshot(sb, "03_done.png")
-            print("🎉 自动续期流程完成")
+            print("🎉 Turnstile 验证完成 / 自动续期流程完成")
 
     finally:
         if display:
             display.stop()
-
 
 if __name__ == "__main__":
     main()
