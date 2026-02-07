@@ -32,7 +32,10 @@ def human_sleep(a=1.2, b=2.8):
     time.sleep(random.uniform(a, b))
 
 def wait_react_loaded(sb):
-    sb.wait_for_ready_state_complete(timeout=30)
+    try:
+        sb.wait_for_ready_state_complete(timeout=30)
+    except Exception:
+        pass
     human_sleep(2, 3)
 
 def remove_ads(sb):
@@ -67,8 +70,11 @@ def click_time_add(sb):
     print("🖱️ 尝试点击 시간 추가 按钮")
     selectors = [
         '//button[span[contains(text(), "시간 추가")]]',
-        '//button[contains(text(), "Renew")]'
+        '//button[contains(text(), "시간 추가")]',
+        '//button[contains(text(), "Renew")]',
+        '//button[contains(text(), "renew")]',
     ]
+
     for sel in selectors:
         try:
             sb.wait_for_element_visible(sel, timeout=12)
@@ -79,7 +85,36 @@ def click_time_add(sb):
             return True
         except Exception:
             continue
+
     return False
+
+# =========================
+# 检测 Cloudflare 页面状态
+# =========================
+def page_has_cloudflare_text(sb):
+    try:
+        html = sb.get_page_source().lower()
+        keywords = [
+            "verify you are human",
+            "verifying",
+            "cloudflare",
+            "cf-browser-verification",
+            "challenge-platform",
+            "turnstile",
+        ]
+        return any(k in html for k in keywords)
+    except Exception:
+        return False
+
+def has_cf_clearance(sb):
+    try:
+        cookies = sb.get_cookies()
+        for c in cookies:
+            if c.get("name") == "cf_clearance" and c.get("value"):
+                return True
+        return False
+    except Exception:
+        return False
 
 # =========================
 # Turnstile 坐标点击
@@ -98,40 +133,46 @@ def click_turnstile_checkbox(sb):
     """)
 
     if not rect:
+        print("⚠️ 未找到 Turnstile iframe")
         return False
 
     # 中心点 + 随机偏移
-    x = rect["x"] + rect["w"] * (0.45 + random.random()*0.1)
-    y = rect["y"] + rect["h"] * (0.45 + random.random()*0.1)
+    x = rect["x"] + rect["w"] * (0.40 + random.random() * 0.2)
+    y = rect["y"] + rect["h"] * (0.40 + random.random() * 0.2)
 
     print(f"🖱️ Turnstile 点击坐标: {x:.1f}, {y:.1f}")
 
     try:
         sb.uc_gui_click_x_y(x, y)
         return True
-    except Exception:
+    except Exception as e:
+        print(f"⚠️ Turnstile 点击失败: {e}")
         return False
 
 # =========================
-# Turnstile 通过检测
+# 等待 Cloudflare verifying 结束
 # =========================
-def turnstile_passed(sb):
-    try:
-        cookies = sb.get_cookies()
-        if any(c["name"] == "cf_clearance" for c in cookies):
+def wait_cloudflare_verifying(sb, timeout=40):
+    print("⏳ 等待 Cloudflare Verifying 结束 ...")
+    start = time.time()
+
+    while time.time() - start < timeout:
+        if has_cf_clearance(sb):
+            print("✅ 检测到 cf_clearance cookie")
             return True
 
-        iframe_exist = sb.execute_script("""
-        return document.querySelector("iframe[src*='challenges.cloudflare.com']") !== null;
-        """)
-        return not iframe_exist
-    except Exception:
-        return False
+        if not page_has_cloudflare_text(sb):
+            # 页面已经不像验证页了
+            return True
+
+        time.sleep(2)
+
+    return False
 
 # =========================
-# Turnstile 主流程
+# Turnstile 主流程（修复版）
 # =========================
-def solve_turnstile(sb, timeout=120):
+def solve_turnstile(sb, timeout=180):
     print("🛡️ 处理 Cloudflare Turnstile ...")
     start = time.time()
     attempt = 0
@@ -139,17 +180,45 @@ def solve_turnstile(sb, timeout=120):
     while time.time() - start < timeout:
         attempt += 1
 
-        if turnstile_passed(sb):
-            print("✅ Turnstile 已通过")
+        # 真正通过条件：cf_clearance
+        if has_cf_clearance(sb):
+            print("✅ Turnstile 已通过 (cf_clearance)")
             return True
 
-        if click_turnstile_checkbox(sb):
-            print(f"👉 已尝试点击 Turnstile ({attempt})")
+        # 如果页面已经不是验证页，也可以认为通过（但仍建议等 cookie）
+        if not page_has_cloudflare_text(sb):
+            print("ℹ️ 页面不再显示 Cloudflare 验证内容，继续确认 cookie ...")
+            time.sleep(2)
 
+        print(f"🔁 Turnstile 尝试次数: {attempt}")
+
+        # 点击 checkbox
+        clicked = click_turnstile_checkbox(sb)
+        if clicked:
+            print("👉 已尝试点击 Turnstile")
+
+        # 等待 verifying
+        wait_cloudflare_verifying(sb, timeout=25)
+
+        # 再次检查 cookie
+        if has_cf_clearance(sb):
+            print("✅ Turnstile 已通过 (after wait)")
+            return True
+
+        # 偶数次截图
         if attempt % 2 == 0:
             screenshot(sb, f"cf_attempt_{attempt}.png")
 
-        human_sleep(2, 3)
+        # 某些情况下刷新会触发 cookie 写入
+        if attempt % 3 == 0:
+            print("🔄 尝试刷新页面触发 Cloudflare 放行 ...")
+            try:
+                sb.refresh()
+                wait_react_loaded(sb)
+            except Exception:
+                pass
+
+        human_sleep(3, 5)
 
     screenshot(sb, "cf_failed.png")
     return False
@@ -158,7 +227,7 @@ def solve_turnstile(sb, timeout=120):
 # 主流程
 # =========================
 def main():
-    print("🚀 Weirdhost 自动续期（UC + 强化 Turnstile 自动点击）")
+    print("🚀 Weirdhost 自动续期（UC + 强化 Turnstile 自动点击 修复版）")
 
     if not SERVER_URL:
         raise Exception("❌ WEIRDHOST_SERVER_URL 未设置")
@@ -206,15 +275,21 @@ def main():
 
             screenshot(sb, "02_after_click.png")
 
-            # 处理 Turnstile
+            # 处理 Turnstile（修复版）
             if not solve_turnstile(sb):
                 raise Exception("❌ Turnstile 未通过")
 
             screenshot(sb, "03_turnstile_passed.png")
 
-            human_sleep(5, 8)
-            screenshot(sb, "04_done.png")
+            # 等待页面完全加载/跳转
+            human_sleep(6, 10)
 
+            # 最终确认页面不是 verify
+            if page_has_cloudflare_text(sb) and not has_cf_clearance(sb):
+                screenshot(sb, "04_still_verify.png")
+                raise Exception("❌ 仍停留在 Verify you are human，Cloudflare 未真正放行")
+
+            screenshot(sb, "04_done.png")
             print("🎉 Weirdhost 自动续期完成")
 
     finally:
