@@ -35,9 +35,6 @@ def screenshot(sb, name: str):
         print(f"⚠️ Screenshot failed: {e}")
 
 def _has_cf_clearance(sb: SB) -> bool:
-    """
-    检查 cf_clearance 是否存在（用于判断 Cloudflare 是否放行）
-    """
     try:
         cookies = sb.get_cookies()
         cf_clearance = next((c["value"] for c in cookies if c.get("name") == "cf_clearance"), None)
@@ -47,9 +44,6 @@ def _has_cf_clearance(sb: SB) -> bool:
         return False
 
 def _robust_click(sb: SB, sel: str, tries: int = 3, sleep_s: float = 0.5) -> bool:
-    """
-    更稳的点击函数：滚动 + 尝试 JS click 兜底
-    """
     last_err = None
     for t in range(1, tries + 1):
         try:
@@ -73,33 +67,7 @@ def _robust_click(sb: SB, sel: str, tries: int = 3, sleep_s: float = 0.5) -> boo
     print(f"⚠️ robust_click 失败：{sel} err={last_err}")
     return False
 
-def _wait_cloudflare_pass(sb: SB, timeout: int = TIMEOUT_WAIT_CF) -> bool:
-    """
-    等待 Cloudflare JS 完成（Managed Challenge / Turnstile）
-    """
-    start = time.time()
-    while time.time() - start < timeout:
-        page_source = sb.get_page_source().lower()
-        challenge_indicators = [
-            "just a moment",
-            "checking your browser",
-            "verify you are human",
-            "cf-browser-verification",
-            "cloudflare",
-        ]
-        if not any(x in page_source for x in challenge_indicators):
-            if _has_cf_clearance(sb):
-                return True
-            else:
-                # 有时 Managed Challenge 不立即下发 cf_clearance
-                return True
-        human_sleep(1.0, 2.0)
-    return False
-
 def click_time_add(sb: SB) -> bool:
-    """
-    点击 Weirdhost “시간 추가” 按钮（或 Renew）
-    """
     selectors = [
         '//button[span[contains(text(), "시간 추가")]]',
         '//button[contains(text(), "Renew")]'
@@ -116,7 +84,6 @@ def click_time_add(sb: SB) -> bool:
     return False
 
 def setup_xvfb():
-    """Linux 下启用虚拟显示"""
     if platform.system().lower() == "linux" and not os.environ.get("DISPLAY"):
         try:
             from pyvirtualdisplay import Display
@@ -183,23 +150,31 @@ def main():
             screenshot(sb, "02_after_click.png")
 
             # -------------------------------
-            # 尝试 Turnstile / Cloudflare 验证
+            # 等待 Turnstile / Cloudflare 完成
             # -------------------------------
-            try:
-                sb.uc_gui_click_captcha()
-                human_sleep(3, 4)
-                print("✅ Turnstile 验证尝试完成")
-            except Exception as e:
-                print(f"⚠️ Turnstile 点击异常: {e}")
+            print("⏳ 等待 Turnstile / Cloudflare 验证...")
+            start = time.time()
+            while time.time() - start < TIMEOUT_WAIT_CF:
+                human_sleep(1.0, 2.0)
+                # cf_clearance 下发或者按钮消失都认为完成
+                if _has_cf_clearance(sb):
+                    break
+                try:
+                    # 检查按钮是否消失
+                    if not sb.is_element_visible('//button[span[contains(text(), "시간 추가")]]'):
+                        print("⏳ 시간 추가 按钮已消失，可能续期成功")
+                        break
+                except Exception:
+                    pass
+            else:
+                print("⚠️ Cloudflare 验证超时")
+                screenshot(sb, "cf_failed.png")
+                raise Exception("❌ Cloudflare 验证未通过")
 
             # -------------------------------
-            # 等待 Cloudflare 放行
+            # 等待页面更新 Expiry（可选，确保续期成功）
             # -------------------------------
-            print("⏳ 等待 Cloudflare 放行 / cf_clearance...")
-            if not _wait_cloudflare_pass(sb, timeout=TIMEOUT_WAIT_CF):
-                print("⚠️ Cloudflare challenge 超时")
-            else:
-                print("✅ Cloudflare 放行 / cf_clearance OK")
+            human_sleep(2, 3)
 
             # -------------------------------
             # 完成截图
@@ -210,7 +185,6 @@ def main():
     finally:
         if display:
             display.stop()
-
 
 if __name__ == "__main__":
     main()
