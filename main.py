@@ -102,60 +102,49 @@ def wait_turnstile_passed(sb, timeout=90):
 # Renew / NEXT
 # =========================
 def click_renew_button(sb):
-    print("🕒 查找 Renew / 시간 추가 按钮 ...")
+    print("🕒 查找 Renew / 시간 추가（屏幕坐标方案）...")
+
+    # 先滚动，确保按钮区域渲染
+    human_scroll(sb)
+    human_sleep(2, 3)
 
     try:
-        clicked = sb.execute_script("""
+        # 找到包含 “시간 추가” 的文本节点的屏幕位置
+        rect = sb.execute_script("""
         (() => {
-            const KEYWORDS = ["renew", "extend", "시간", "추가"];
+            const texts = [...document.querySelectorAll("*")]
+              .filter(el => {
+                const t = el.innerText || "";
+                return t.includes("시간 추가");
+              });
 
-            const walker = document.createTreeWalker(
-                document.body,
-                NodeFilter.SHOW_TEXT,
-                {
-                    acceptNode(node) {
-                        const t = node.textContent?.trim();
-                        if (!t) return NodeFilter.FILTER_REJECT;
-                        return KEYWORDS.some(k => t.toLowerCase().includes(k))
-                            ? NodeFilter.FILTER_ACCEPT
-                            : NodeFilter.FILTER_REJECT;
-                    }
-                }
-            );
-
-            let node;
-            while ((node = walker.nextNode())) {
-                let el = node.parentElement;
-
-                for (let i = 0; i < 6 && el; i++) {
-                    const tag = el.tagName?.toLowerCase();
-                    const role = el.getAttribute?.("role");
-
-                    const clickable =
-                        tag === "button" ||
-                        role === "button" ||
-                        el.onclick ||
-                        el.tabIndex >= 0;
-
-                    if (clickable && el.offsetParent) {
-                        el.scrollIntoView({ block: "center", behavior: "smooth" });
-                        el.click();
-                        return true;
-                    }
-                    el = el.parentElement;
+            for (const el of texts) {
+                const r = el.getBoundingClientRect();
+                if (r.width > 30 && r.height > 15) {
+                    return {
+                        x: r.left + r.width / 2,
+                        y: r.top + r.height / 2
+                    };
                 }
             }
-            return false;
+            return null;
         })();
         """)
 
-        if clicked:
-            print("✅ 已点击 Renew / 시간 추가")
-            return True
-    except Exception as e:
-        print("⚠️ Renew JS 异常:", e)
+        if not rect:
+            print("❌ 未找到 时间追加 文本节点")
+            return False
 
-    return False
+        print(f"🖱️ 屏幕坐标点击: ({rect['x']:.0f}, {rect['y']:.0f})")
+
+        # 使用 UC 的真实鼠标点击
+        sb.uc_click(rect["x"], rect["y"])
+        human_sleep(2, 3)
+        return True
+
+    except Exception as e:
+        print("❌ Renew 坐标点击失败:", e)
+        return False
 
 def wait_next_button(sb, timeout=60):
     print("⏳ 等待 NEXT / 다음 按钮 ...")
