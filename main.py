@@ -1,221 +1,135 @@
 import os
 import time
-import random
-import platform
-from seleniumbase import SB
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
-# =========================
-# pyvirtualdisplay 可选
-# =========================
-try:
-    from pyvirtualdisplay import Display
-    HAS_XVFB = True
-except ImportError:
-    Display = None
-    HAS_XVFB = False
 
-# =========================
-# 环境变量
-# =========================
-REMEMBER_WEB_COOKIE = os.environ.get("REMEMBER_WEB_COOKIE")
-SERVER_URL = os.environ.get("WEIRDHOST_SERVER_URL")
+def wait_for_turnstile(page, timeout=60000):
+    """
+    等待 Cloudflare Turnstile 验证完成
+    """
+    print("检测是否出现 Cloudflare Turnstile 验证...")
 
-SCREENSHOT_DIR = "screenshots"
-os.makedirs(SCREENSHOT_DIR, exist_ok=True)
-
-# =========================
-# 工具函数
-# =========================
-def log(msg):
-    print(msg, flush=True)
-
-def screenshot(sb, name):
-    path = f"{SCREENSHOT_DIR}/{name}"
     try:
-        sb.save_screenshot(path)
-        log(f"📸 Screenshot saved: {path}")
-    except Exception as e:
-        log(f"⚠️ Screenshot failed: {e}")
+        # 等待 Turnstile iframe 出现（如果存在）
+        page.wait_for_selector('iframe[src*="turnstile"]', timeout=10000)
+        print("检测到 Turnstile 小组件，等待验证通过...")
 
-def human_sleep(a=1.2, b=2.8):
-    time.sleep(random.uniform(a, b))
+    except PlaywrightTimeoutError:
+        print("未检测到 Turnstile，可能无需验证。")
+        return True
 
-def wait_react_loaded(sb):
-    sb.wait_for_ready_state_complete(timeout=30)
-    human_sleep(2, 3)
-
-def human_scroll(sb):
     try:
-        sb.execute_script("window.scrollTo(0, document.body.scrollHeight * 0.4)")
-        human_sleep()
-        sb.execute_script("window.scrollTo(0, 0)")
-    except Exception:
-        pass
-
-def remove_ads(sb):
-    try:
-        sb.execute_script("""
-        document.querySelectorAll("iframe").forEach(f=>{
-            if (!(f.src||"").includes("challenges.cloudflare.com")) {
-                f.remove();
+        # 等待 token 生成
+        page.wait_for_function("""
+            () => {
+                const input = document.querySelector('input[name="cf-turnstile-response"]');
+                return input && input.value && input.value.length > 0;
             }
-        });
-        """)
-    except Exception:
-        pass
+        """, timeout=timeout)
 
-# =========================
-# Xvfb（可选）
-# =========================
-def setup_xvfb():
-    if platform.system().lower() == "linux" and not os.environ.get("DISPLAY") and HAS_XVFB:
-        display = Display(visible=False, size=(1920, 1080))
-        display.start()
-        os.environ["DISPLAY"] = display.new_display_var
-        log("🖥️ Xvfb 已启动")
-        return display
-    return None
+        print("✅ Turnstile 验证已通过")
+        return True
 
-# =========================
-# 点击「시간 추가」
-# =========================
-def click_time_add(sb):
-    log("🖱️ 尝试点击 시간 추가")
-    selectors = [
-        '//button[span[contains(text(), "시간 추가")]]',
-        '//button[contains(text(), "Renew")]',
-    ]
-    for sel in selectors:
+    except PlaywrightTimeoutError:
+        print("❌ Turnstile 验证超时")
+        page.screenshot(path="turnstile_timeout.png")
+        return False
+
+
+def add_server_time(server_url="https://hub.weirdhost.xyz/server/a79a2b26"):
+
+    remember_web_cookie = os.environ.get('REMEMBER_WEB_COOKIE')
+    pterodactyl_email = os.environ.get('PTERODACTYL_EMAIL')
+    pterodactyl_password = os.environ.get('PTERODACTYL_PASSWORD')
+
+    if not (remember_web_cookie or (pterodactyl_email and pterodactyl_password)):
+        print("错误: 缺少登录凭据")
+        return False
+
+    with sync_playwright() as p:
+
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_default_timeout(90000)
+
         try:
-            sb.wait_for_element_visible(sel, timeout=10)
-            sb.scroll_to(sel)
-            human_sleep()
-            sb.click(sel)
-            log(f"✅ 点击成功: {sel}")
-            return True
-        except Exception:
-            pass
-    return False
 
-# =========================
-# Turnstile：被动等待（不解）
-# =========================
-def wait_cf_passive(sb, timeout=60):
-    log("🛡️ 被动等待 Cloudflare 放行（不强求）")
-    start = time.time()
+            # ===== Cookie 登录 =====
+            if remember_web_cookie:
+                print("尝试 Cookie 登录")
 
-    while time.time() - start < timeout:
-        try:
-            cookies = sb.get_cookies()
-            if any(c["name"] == "cf_clearance" for c in cookies):
-                log("✅ Cloudflare 已放行")
-                return True
-        except Exception:
-            pass
-        time.sleep(1)
-
-    log("⚠️ Cloudflare 未放行，跳过续期流程")
-    return False
-
-# =========================
-# NEXT / 다음
-# =========================
-def click_next_if_exists(sb):
-    try:
-        clicked = sb.execute_script("""
-        (() => {
-            for (const el of document.querySelectorAll("button, [role='button']")) {
-                if (!el.offsetParent) continue;
-                const t = (el.innerText || "").toLowerCase();
-                if (t.includes("next") || t.includes("다음")) {
-                    el.scrollIntoView({block:"center"});
-                    el.click();
-                    return true;
+                session_cookie = {
+                    'name': 'remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d',
+                    'value': remember_web_cookie,
+                    'domain': 'hub.weirdhost.xyz',
+                    'path': '/',
+                    'httpOnly': True,
+                    'secure': True,
+                    'sameSite': 'Lax'
                 }
-            }
-            return false;
-        })();
-        """)
-        if clicked:
-            log("✅ NEXT 已点击")
+
+                page.context.add_cookies([session_cookie])
+                page.goto(server_url, wait_until="domcontentloaded")
+
+                if "login" in page.url:
+                    print("Cookie 失效")
+                    page.context.clear_cookies()
+                    remember_web_cookie = None
+                else:
+                    print("Cookie 登录成功")
+
+            # ===== 账号密码登录 =====
+            if not remember_web_cookie:
+
+                login_url = "https://hub.weirdhost.xyz/auth/login"
+                page.goto(login_url)
+
+                page.fill('input[name="username"]', pterodactyl_email)
+                page.fill('input[name="password"]', pterodactyl_password)
+
+                with page.expect_navigation():
+                    page.click('button[type="submit"]')
+
+                if "login" in page.url:
+                    print("登录失败")
+                    return False
+
+            # ===== 进入服务器页面 =====
+            if page.url != server_url:
+                page.goto(server_url)
+
+            # ===== 点击 시간 추가 =====
+            print("查找 '시간 추가' 按钮")
+
+            add_button = page.locator('button:has-text("시간 추가")')
+            add_button.wait_for(state='visible')
+            add_button.click()
+
+            print("已点击时间追加按钮")
+
+            # ===== 等待 Turnstile =====
+            if not wait_for_turnstile(page):
+                return False
+
+            # 等服务器处理
+            time.sleep(5)
+
+            print("🎉 时间追加流程完成")
+            browser.close()
             return True
-    except Exception:
-        pass
-    return False
 
-# =========================
-# 主流程
-# =========================
-def main():
-    log("🚀 Weirdhost 自动续期（现实可落地版）")
+        except Exception as e:
+            print(f"未知错误: {e}")
+            page.screenshot(path="general_error.png")
+            browser.close()
+            return False
 
-    if not SERVER_URL:
-        log("❌ WEIRDHOST_SERVER_URL 未设置，直接退出")
-        return
-
-    display = setup_xvfb()
-
-    try:
-        with SB(
-            uc=True,
-            headless=False,
-            locale="en",
-            chromium_arg=[
-                "--window-size=1920,1080",
-                "--disable-blink-features=AutomationControlled",
-            ],
-        ) as sb:
-
-            # 首页
-            sb.uc_open_with_reconnect("https://hub.weirdhost.xyz", reconnect_time=5)
-            wait_react_loaded(sb)
-
-            # Cookie 登录
-            if REMEMBER_WEB_COOKIE:
-                log("🍪 注入 Cookie 登录")
-                sb.add_cookie({
-                    "name": "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d",
-                    "value": REMEMBER_WEB_COOKIE,
-                    "domain": "hub.weirdhost.xyz",
-                    "path": "/",
-                    "secure": True,
-                    "httpOnly": True,
-                })
-                sb.refresh()
-                wait_react_loaded(sb)
-
-            # 打开服务器页面
-            log(f"📦 打开服务器页面: {SERVER_URL}")
-            sb.uc_open_with_reconnect(SERVER_URL, reconnect_time=5)
-            wait_react_loaded(sb)
-            remove_ads(sb)
-            human_scroll(sb)
-            screenshot(sb, "01_server_page.png")
-
-            # 点击时间追加
-            if not click_time_add(sb):
-                screenshot(sb, "renew_button_not_found.png")
-                log("❌ 未找到续期按钮，结束")
-                return
-
-            screenshot(sb, "02_after_click.png")
-
-            # 被动等 CF（不再死磕）
-            if not wait_cf_passive(sb):
-                screenshot(sb, "cf_blocked.png")
-                return
-
-            # 有 NEXT 就点，没有就算成功
-            human_sleep(2, 4)
-            click_next_if_exists(sb)
-            human_sleep(5, 8)
-
-            screenshot(sb, "03_done.png")
-            log("🎉 Weirdhost 自动流程结束")
-
-    finally:
-        if display:
-            display.stop()
 
 if __name__ == "__main__":
-    main()
+    print("开始执行添加服务器时间任务...")
+    success = add_server_time()
+
+    if success:
+        exit(0)
+    else:
+        exit(1)
