@@ -18,8 +18,9 @@ os.makedirs("screenshots", exist_ok=True)
 # 工具函数
 # =========================
 def screenshot(sb, name):
-    sb.save_screenshot(f"screenshots/{name}")
-    print(f"📸 Screenshot saved: screenshots/{name}")
+    path = f"screenshots/{name}"
+    sb.save_screenshot(path)
+    print(f"📸 Screenshot saved: {path}")
 
 def sleep(a=2, b=4):
     time.sleep(random.uniform(a, b))
@@ -29,7 +30,7 @@ def wait_loaded(sb):
     sleep(2, 3)
 
 def scroll_container(sb):
-    """滚动页面底部，适应 Weirdhost 内部容器"""
+    """滚动页面底部，确保按钮可见"""
     sb.execute_script("""
     (() => {
         const els = [
@@ -84,17 +85,16 @@ def wait_cf_pass(sb, timeout=120):
 # =========================
 # Renew / 시간 추가 按钮
 # =========================
-def trigger_renew_click(sb):
-    """尝试点击 Renew / 시간 추가，第一次触发 CF，第二次完成续期"""
-    print("🖱️ 尝试点击 시간 추가")
+def click_time_add(sb):
+    print("🖱️ 尝试点击 시간 추가 按钮")
     scroll_container(sb)
-    sleep(1.5, 2.5)
+    sleep(1, 2)
     try:
-        sb.execute_script("""
+        clicked = sb.execute_script("""
         (() => {
-            const keys = ["시간", "추가", "renew", "extend"];
-            for (const el of document.querySelectorAll("button, [role='button'], div")) {
-                const t = (el.innerText || "").toLowerCase();
+            const keys = ["시간 추가", "renew", "extend"];
+            for (const el of document.querySelectorAll("button, [role='button']")) {
+                const t = el.innerText || "";
                 if (keys.some(k => t.includes(k)) && el.offsetParent) {
                     el.scrollIntoView({block:"center"});
                     el.click();
@@ -104,9 +104,15 @@ def trigger_renew_click(sb):
             return false;
         })();
         """)
-        print("🟡 已尝试点击 시간 추가")
+        if clicked:
+            print("✅ 시간 추가 点击成功")
+            return True
+        else:
+            print("❌ 시간 추가 未找到")
+            return False
     except Exception as e:
         print("⚠️ 点击失败:", e)
+        return False
 
 # =========================
 # NEXT / 다음
@@ -152,7 +158,7 @@ def click_next(sb):
 # 主流程
 # =========================
 def main():
-    print("🚀 Weirdhost 自动续期（两步点击 + CF 顺序版）")
+    print("🚀 Weirdhost 自动续期（最终稳定版）")
 
     if not SERVER_URL:
         raise Exception("❌ WEIRDHOST_SERVER_URL 未设置")
@@ -164,7 +170,7 @@ def main():
         chromium_arg="--start-maximized --window-size=1920,1080"
     ) as sb:
 
-        # 打开 Weirdhost 主站
+        # 打开主站
         sb.uc_open_with_reconnect("https://hub.weirdhost.xyz", 5)
         wait_loaded(sb)
 
@@ -187,36 +193,37 @@ def main():
         wait_loaded(sb)
         screenshot(sb, "01_server_page.png")
 
-        # ⭐ 第一次点击：触发 CF
-        trigger_renew_click(sb)
-        sleep(2, 4)
+        # ⭐ 第一次点击：真正触发 CF
+        if not click_time_add(sb):
+            screenshot(sb, "renew_not_found.png")
+            raise Exception("❌ 时间追加按钮未找到")
+        screenshot(sb, "02_after_first_click.png")
 
-        # 尝试点一次 CF 勾选
+        # 等 CF
+        sleep(1, 2)
         try:
-            sb.uc_gui_click_captcha()
+            sb.uc_gui_click_captcha()  # 尝试点击 CF
         except Exception:
             pass
 
-        # 等 CF 放行
         if not wait_cf_pass(sb):
             screenshot(sb, "cf_failed.png")
             raise Exception("❌ Cloudflare 未通过")
+        screenshot(sb, "03_cf_passed.png")
 
-        screenshot(sb, "02_cf_passed.png")
-
-        # ⭐ 第二次点击：真正续期
-        trigger_renew_click(sb)
-        sleep(2, 4)
-        screenshot(sb, "03_after_renew.png")
+        # ⭐ 第二次点击：完成续期
+        if not click_time_add(sb):
+            screenshot(sb, "renew_second_fail.png")
+            raise Exception("❌ 时间追加按钮第二次点击失败")
+        screenshot(sb, "04_after_second_click.png")
 
         # 等 NEXT
         if not wait_next(sb):
             screenshot(sb, "no_next.png")
             raise Exception("❌ NEXT 未出现")
-
         click_next(sb)
-        sleep(6, 10)
-        screenshot(sb, "04_done.png")
+        sleep(5, 8)
+        screenshot(sb, "05_done.png")
 
         print("🎉 Weirdhost 自动续期完成")
 
