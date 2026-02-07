@@ -184,12 +184,11 @@ def main():
             uc=True,
             locale="en",
             headless=False,
-
-            # ⭐ 等价 Playwright args
-            chromium_arg="--no-sandbox",
-            chromium_arg="--disable-blink-features=AutomationControlled",
-            chromium_arg="--window-size=1920,1080"
-
+            chromium_args=[
+                "--no-sandbox",
+                "--disable-blink-features=AutomationControlled",
+                "--window-size=1920,1080"
+            ]
         ) as sb:
 
             # 首页
