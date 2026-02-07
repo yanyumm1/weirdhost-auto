@@ -80,7 +80,6 @@ def _wait_cloudflare_pass(sb: SB, timeout: int = TIMEOUT_WAIT_CF) -> bool:
     start = time.time()
     while time.time() - start < timeout:
         page_source = sb.get_page_source().lower()
-        # 如果页面仍在 challenge 状态，继续等待
         challenge_indicators = [
             "just a moment",
             "checking your browser",
@@ -89,7 +88,6 @@ def _wait_cloudflare_pass(sb: SB, timeout: int = TIMEOUT_WAIT_CF) -> bool:
             "cloudflare",
         ]
         if not any(x in page_source for x in challenge_indicators):
-            # challenge消失，尝试检查 cf_clearance
             if _has_cf_clearance(sb):
                 return True
             else:
@@ -175,23 +173,36 @@ def main():
             human_sleep(2, 3)
             screenshot(sb, "01_server_page.png")
 
-            # 等待 Cloudflare JS 完成
-            print("⏳ 等待 Cloudflare JS challenge 放行...")
-            if not _wait_cloudflare_pass(sb):
-                print("⚠️ Cloudflare challenge 超时")
-            else:
-                print("✅ Cloudflare 已放行 / cf_clearance OK")
-
-            # 点击时间追加
+            # -------------------------------
+            # 点击 시간 추가 / Renew 按钮
+            # -------------------------------
             if not click_time_add(sb):
                 screenshot(sb, "renew_not_found.png")
                 raise Exception("❌ 시간 추가 / Renew 按钮未找到")
 
             screenshot(sb, "02_after_click.png")
 
-            human_sleep(2, 4)
-            print("🎉 自动续期流程完成")
+            # -------------------------------
+            # 等待弹窗 / challenge 放行
+            # -------------------------------
+            print("⏳ 等待弹窗 Cloudflare challenge 放行...")
+            # 假设弹窗类名包含 renew-popup
+            try:
+                sb.wait_for_element_visible("//div[contains(@class,'renew-popup')]", timeout=10)
+                human_sleep(1,2)
+            except Exception:
+                print("⚠️ 弹窗未出现，可能已自动跳过")
+
+            if not _wait_cloudflare_pass(sb, timeout=60):
+                print("⚠️ 弹窗 Cloudflare challenge 超时")
+            else:
+                print("✅ 弹窗 Cloudflare 已放行 / cf_clearance OK")
+
+            # -------------------------------
+            # 完成截图
+            # -------------------------------
             screenshot(sb, "03_done.png")
+            print("🎉 自动续期流程完成")
 
     finally:
         if display:
