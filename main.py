@@ -25,7 +25,7 @@ def screenshot(sb, name):
     except Exception as e:
         print(f"⚠️ Screenshot failed: {e}")
 
-def human_sleep(a=1.0, b=2.5):
+def human_sleep(a=1.2, b=2.8):
     time.sleep(random.uniform(a, b))
 
 def wait_react_loaded(sb):
@@ -34,9 +34,9 @@ def wait_react_loaded(sb):
 
 def human_scroll(sb):
     try:
-        sb.execute_script("window.scrollTo(0, document.body.scrollHeight * 0.3)")
+        sb.execute_script("window.scrollTo(0, document.body.scrollHeight * 0.25)")
         human_sleep(1.5, 2.5)
-        sb.execute_script("window.scrollTo(0, document.body.scrollHeight * 0.6)")
+        sb.execute_script("window.scrollTo(0, document.body.scrollHeight * 0.55)")
         human_sleep(1.5, 2.5)
         sb.execute_script("window.scrollTo(0, 0)")
         human_sleep(1.0, 2.0)
@@ -57,7 +57,7 @@ def remove_ads(sb):
         pass
 
 # =========================
-# CF 判断
+# Cloudflare 判断
 # =========================
 def cf_cookie_present(sb):
     try:
@@ -70,17 +70,15 @@ def cf_cookie_present(sb):
         return False
 
 def wait_turnstile_passed(sb, timeout=90):
-    print("🛡️ 等待 Turnstile 通过判定 ...")
+    print("🛡️ 等待 Turnstile 放行 ...")
     start = time.time()
 
     while time.time() - start < timeout:
         try:
-            # ① Cookie 已下发，直接判定通过
             if cf_cookie_present(sb):
                 print("✅ CF Cookie 已存在")
                 return True
 
-            # ② iframe 消失或被隐藏
             iframe_ok = sb.execute_script("""
             (() => {
                 const iframes = [...document.querySelectorAll("iframe")]
@@ -97,78 +95,119 @@ def wait_turnstile_passed(sb, timeout=90):
 
         time.sleep(1)
 
-    print("❌ Turnstile 超时未通过")
+    print("❌ Turnstile 超时")
     return False
 
 # =========================
 # Renew / NEXT
 # =========================
 def click_renew_button(sb):
-    print("🕒 查找 Renew 按钮 ...")
+    print("🕒 查找 Renew / 시간 추가 按钮 ...")
+
     try:
         clicked = sb.execute_script("""
         (() => {
-            const keys = ["renew", "시간", "추가", "extend"];
-            for (const b of document.querySelectorAll("button")) {
-                const t = (b.innerText || "").toLowerCase();
-                if (keys.some(k => t.includes(k)) && b.offsetParent) {
-                    b.scrollIntoView({block:"center"});
-                    b.click();
-                    return true;
+            const KEYWORDS = ["renew", "extend", "시간", "추가"];
+
+            const walker = document.createTreeWalker(
+                document.body,
+                NodeFilter.SHOW_TEXT,
+                {
+                    acceptNode(node) {
+                        const t = node.textContent?.trim();
+                        if (!t) return NodeFilter.FILTER_REJECT;
+                        return KEYWORDS.some(k => t.toLowerCase().includes(k))
+                            ? NodeFilter.FILTER_ACCEPT
+                            : NodeFilter.FILTER_REJECT;
+                    }
+                }
+            );
+
+            let node;
+            while ((node = walker.nextNode())) {
+                let el = node.parentElement;
+
+                for (let i = 0; i < 6 && el; i++) {
+                    const tag = el.tagName?.toLowerCase();
+                    const role = el.getAttribute?.("role");
+
+                    const clickable =
+                        tag === "button" ||
+                        role === "button" ||
+                        el.onclick ||
+                        el.tabIndex >= 0;
+
+                    if (clickable && el.offsetParent) {
+                        el.scrollIntoView({ block: "center", behavior: "smooth" });
+                        el.click();
+                        return true;
+                    }
+                    el = el.parentElement;
                 }
             }
             return false;
         })();
         """)
-        return bool(clicked)
-    except Exception:
-        return False
+
+        if clicked:
+            print("✅ 已点击 Renew / 시간 추가")
+            return True
+    except Exception as e:
+        print("⚠️ Renew JS 异常:", e)
+
+    return False
 
 def wait_next_button(sb, timeout=60):
-    print("⏳ 等待 NEXT 按钮 ...")
+    print("⏳ 等待 NEXT / 다음 按钮 ...")
     start = time.time()
+
     while time.time() - start < timeout:
         try:
             found = sb.execute_script("""
             (() => {
-                return [...document.querySelectorAll("button")]
-                  .some(b => {
-                    const t = (b.innerText || "").toLowerCase();
-                    return b.offsetParent && (t.includes("next") || t.includes("다음"));
+                return [...document.querySelectorAll("button, [role='button']")]
+                  .some(el => {
+                    const t = (el.innerText || "").toLowerCase();
+                    return el.offsetParent && (t.includes("next") || t.includes("다음"));
                   });
             })();
             """)
             if found:
-                print("✅ NEXT 出现")
+                print("✅ NEXT 已出现")
                 return True
         except Exception:
             pass
         time.sleep(1)
+
     return False
 
 def click_next_button(sb):
     try:
-        return sb.execute_script("""
+        clicked = sb.execute_script("""
         (() => {
-            for (const b of document.querySelectorAll("button")) {
-                const t = (b.innerText || "").toLowerCase();
-                if (b.offsetParent && (t.includes("next") || t.includes("다음"))) {
-                    b.scrollIntoView({block:"center"});
-                    b.click();
+            for (const el of document.querySelectorAll("button, [role='button']")) {
+                const t = (el.innerText || "").toLowerCase();
+                if (el.offsetParent && (t.includes("next") || t.includes("다음"))) {
+                    el.scrollIntoView({ block: "center" });
+                    el.click();
                     return true;
                 }
             }
             return false;
         })();
         """)
+        if clicked:
+            print("✅ NEXT 点击成功")
+            return True
     except Exception:
-        return False
+        pass
+    return False
 
 # =========================
 # 主流程
 # =========================
 def main():
-    print("🚀 Weirdhost 自动续期启动（方案 B）")
+    print("🚀 Weirdhost 自动续期启动（方案 B 完整版）")
 
     if not SERVER_URL:
         raise Exception("❌ WEIRDHOST_SERVER_URL 未设置")
@@ -185,7 +224,7 @@ def main():
         wait_react_loaded(sb)
 
         if REMEMBER_WEB_COOKIE:
-            print("🍪 注入 Cookie")
+            print("🍪 注入 Cookie 登录")
             sb.add_cookie({
                 "name": "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d",
                 "value": REMEMBER_WEB_COOKIE,
@@ -207,12 +246,12 @@ def main():
 
         if not click_renew_button(sb):
             screenshot(sb, "renew_not_found.png")
-            raise Exception("❌ Renew 未找到")
+            raise Exception("❌ Renew / 시간 추가 未找到")
 
         screenshot(sb, "02_after_renew.png")
 
         # ===== Turnstile 真人节奏 =====
-        print("🧍 静置等待 CF 风控评估（非常关键）")
+        print("🧍 静置等待 CF 风控评估")
         human_sleep(20, 30)
 
         human_scroll(sb)
@@ -232,7 +271,7 @@ def main():
 
         if not wait_next_button(sb):
             screenshot(sb, "no_next.png")
-            raise Exception("❌ NEXT 未出现")
+            raise Exception("❌ NEXT / 다음 未出现")
 
         if not click_next_button(sb):
             screenshot(sb, "next_click_fail.png")
