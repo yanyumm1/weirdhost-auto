@@ -17,6 +17,7 @@ SERVER_URL = os.environ.get("WEIRDHOST_SERVER_URL")
 SCREENSHOT_DIR = "screenshots"
 os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
+
 # =========================
 # 工具函数
 # =========================
@@ -28,8 +29,10 @@ def screenshot(sb, name):
     except Exception as e:
         print(f"⚠️ Screenshot failed: {e}")
 
+
 def human_sleep(a=1.2, b=2.8):
     time.sleep(random.uniform(a, b))
+
 
 def wait_react_loaded(sb):
     try:
@@ -37,6 +40,7 @@ def wait_react_loaded(sb):
     except Exception:
         pass
     human_sleep(2, 3)
+
 
 def remove_ads(sb):
     try:
@@ -51,6 +55,7 @@ def remove_ads(sb):
     except Exception:
         pass
 
+
 # =========================
 # Xvfb 支持
 # =========================
@@ -63,11 +68,58 @@ def setup_xvfb():
         return display
     return None
 
+
+# =========================
+# Cloudflare 检测
+# =========================
+def is_cloudflare_page(sb):
+    try:
+        html = sb.get_page_source().lower()
+        keywords = [
+            "verify you are human",
+            "verifying",
+            "just a moment",
+            "checking your browser",
+            "cf-browser-verification",
+            "challenge-platform",
+            "challenges.cloudflare.com",
+            "turnstile",
+            "__cf_chl",
+            "cloudflare",
+        ]
+        return any(k in html for k in keywords)
+    except Exception:
+        return False
+
+
+def has_cf_clearance(sb):
+    try:
+        cookies = sb.get_cookies()
+        for c in cookies:
+            if c.get("name") == "cf_clearance" and c.get("value"):
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def print_cookies(sb):
+    try:
+        cookies = sb.get_cookies()
+        print(f"🍪 当前 Cookie 数量: {len(cookies)}")
+        for c in cookies:
+            if c.get("name") in ["cf_clearance", "__cf_bm"]:
+                print(f"   {c.get('name')}: {c.get('value')[:60]}...")
+    except Exception:
+        pass
+
+
 # =========================
 # 点击 시간 추가
 # =========================
 def click_time_add(sb):
     print("🖱️ 尝试点击 시간 추가 按钮")
+
     selectors = [
         '//button[span[contains(text(), "시간 추가")]]',
         '//button[contains(text(), "시간 추가")]',
@@ -88,146 +140,90 @@ def click_time_add(sb):
 
     return False
 
-# =========================
-# 检测 Cloudflare 页面状态
-# =========================
-def page_has_cloudflare_text(sb):
-    try:
-        html = sb.get_page_source().lower()
-        keywords = [
-            "verify you are human",
-            "verifying",
-            "cloudflare",
-            "cf-browser-verification",
-            "challenge-platform",
-            "turnstile",
-        ]
-        return any(k in html for k in keywords)
-    except Exception:
-        return False
-
-def has_cf_clearance(sb):
-    try:
-        cookies = sb.get_cookies()
-        for c in cookies:
-            if c.get("name") == "cf_clearance" and c.get("value"):
-                return True
-        return False
-    except Exception:
-        return False
 
 # =========================
-# Turnstile 坐标点击
+# Cloudflare / Turnstile 处理（强化版）
 # =========================
-def click_turnstile_checkbox(sb):
-    rect = sb.execute_script("""
-    const f = document.querySelector("iframe[src*='challenges.cloudflare.com']");
-    if (!f) return null;
+def solve_cloudflare(sb, timeout=180):
+    """
+    强化 Cloudflare 绕过逻辑:
+    - 优先用 uc_gui_click_captcha()
+    - 反复 refresh + 等待
+    - 必须拿到 cf_clearance 才算成功
+    """
+    print("🛡️ 开始处理 Cloudflare / Turnstile ...")
 
-    f.style.display = "block";
-    f.style.visibility = "visible";
-    f.style.pointerEvents = "auto";
-
-    const r = f.getBoundingClientRect();
-    return {x:r.x, y:r.y, w:r.width, h:r.height};
-    """)
-
-    if not rect:
-        print("⚠️ 未找到 Turnstile iframe")
-        return False
-
-    # 中心点 + 随机偏移
-    x = rect["x"] + rect["w"] * (0.40 + random.random() * 0.2)
-    y = rect["y"] + rect["h"] * (0.40 + random.random() * 0.2)
-
-    print(f"🖱️ Turnstile 点击坐标: {x:.1f}, {y:.1f}")
-
-    try:
-        sb.uc_gui_click_x_y(x, y)
-        return True
-    except Exception as e:
-        print(f"⚠️ Turnstile 点击失败: {e}")
-        return False
-
-# =========================
-# 等待 Cloudflare verifying 结束
-# =========================
-def wait_cloudflare_verifying(sb, timeout=40):
-    print("⏳ 等待 Cloudflare Verifying 结束 ...")
-    start = time.time()
-
-    while time.time() - start < timeout:
-        if has_cf_clearance(sb):
-            print("✅ 检测到 cf_clearance cookie")
-            return True
-
-        if not page_has_cloudflare_text(sb):
-            # 页面已经不像验证页了
-            return True
-
-        time.sleep(2)
-
-    return False
-
-# =========================
-# Turnstile 主流程（修复版）
-# =========================
-def solve_turnstile(sb, timeout=180):
-    print("🛡️ 处理 Cloudflare Turnstile ...")
     start = time.time()
     attempt = 0
 
     while time.time() - start < timeout:
         attempt += 1
 
-        # 真正通过条件：cf_clearance
         if has_cf_clearance(sb):
-            print("✅ Turnstile 已通过 (cf_clearance)")
+            print("✅ Cloudflare 已通过 (检测到 cf_clearance)")
             return True
 
-        # 如果页面已经不是验证页，也可以认为通过（但仍建议等 cookie）
-        if not page_has_cloudflare_text(sb):
-            print("ℹ️ 页面不再显示 Cloudflare 验证内容，继续确认 cookie ...")
+        if not is_cloudflare_page(sb):
+            print("ℹ️ 当前页面不像 Cloudflare 验证页，但仍等待 clearance ...")
             time.sleep(2)
 
-        print(f"🔁 Turnstile 尝试次数: {attempt}")
+            if has_cf_clearance(sb):
+                print("✅ Cloudflare 已通过 (页面正常 + cookie 已写入)")
+                return True
 
-        # 点击 checkbox
-        clicked = click_turnstile_checkbox(sb)
-        if clicked:
-            print("👉 已尝试点击 Turnstile")
+        print(f"🔁 Cloudflare 处理尝试 {attempt}")
 
-        # 等待 verifying
-        wait_cloudflare_verifying(sb, timeout=25)
-
-        # 再次检查 cookie
-        if has_cf_clearance(sb):
-            print("✅ Turnstile 已通过 (after wait)")
-            return True
-
-        # 偶数次截图
+        # 截图记录
         if attempt % 2 == 0:
             screenshot(sb, f"cf_attempt_{attempt}.png")
 
-        # 某些情况下刷新会触发 cookie 写入
+        # 尝试 SeleniumBase 内置点击
+        try:
+            print("🖱️ 尝试 uc_gui_click_captcha() ...")
+            sb.uc_gui_click_captcha(frame="iframe", retry=False, blind=False)
+            time.sleep(5)
+        except Exception as e:
+            print(f"⚠️ uc_gui_click_captcha 失败: {e}")
+
+        # 等待验证
+        print("⏳ 等待 Cloudflare 验证中 ...")
+        time.sleep(6)
+
+        # 检查 cookie
+        if has_cf_clearance(sb):
+            print("✅ Cloudflare 已通过 (captcha 后写入 clearance)")
+            return True
+
+        # 每 3 次 refresh 一次（Cloudflare 很吃这个）
         if attempt % 3 == 0:
-            print("🔄 尝试刷新页面触发 Cloudflare 放行 ...")
+            print("🔄 refresh 页面触发 Cloudflare 放行 ...")
             try:
                 sb.refresh()
                 wait_react_loaded(sb)
             except Exception:
                 pass
 
-        human_sleep(3, 5)
+        # 每 5 次重连打开一次（更激进）
+        if attempt % 5 == 0:
+            try:
+                url = sb.get_current_url()
+                print(f"🔌 reconnect open: {url}")
+                sb.uc_open_with_reconnect(url, reconnect_time=4)
+                wait_react_loaded(sb)
+            except Exception:
+                pass
+
+        human_sleep(2, 4)
 
     screenshot(sb, "cf_failed.png")
     return False
+
 
 # =========================
 # 主流程
 # =========================
 def main():
-    print("🚀 Weirdhost 自动续期（UC + 强化 Turnstile 自动点击 修复版）")
+    print("🚀 Weirdhost 自动续期（GitHub Actions + Cloudflare 强化版）")
 
     if not SERVER_URL:
         raise Exception("❌ WEIRDHOST_SERVER_URL 未设置")
@@ -237,16 +233,16 @@ def main():
     try:
         with SB(
             uc=True,
-            headless=False,
+            headless=False,   # GitHub Actions 建议 False + Xvfb
             locale="en",
             chromium_arg="--no-sandbox --disable-blink-features=AutomationControlled --window-size=1920,1080"
         ) as sb:
 
-            # 首页
+            # 先打开首页
             sb.uc_open_with_reconnect("https://hub.weirdhost.xyz", reconnect_time=5)
             wait_react_loaded(sb)
 
-            # Cookie 登录
+            # 注入 Cookie 登录
             if REMEMBER_WEB_COOKIE:
                 print("🍪 注入 Cookie 登录")
                 sb.add_cookie({
@@ -260,7 +256,9 @@ def main():
                 sb.refresh()
                 wait_react_loaded(sb)
 
-            # 打开服务器
+            screenshot(sb, "00_home.png")
+
+            # 打开服务器页面
             print(f"📦 打开服务器页面: {SERVER_URL}")
             sb.uc_open_with_reconnect(SERVER_URL, reconnect_time=5)
             wait_react_loaded(sb)
@@ -268,33 +266,39 @@ def main():
 
             screenshot(sb, "01_server_page.png")
 
-            # 点击时间追加
+            # 点击续期按钮
             if not click_time_add(sb):
                 screenshot(sb, "renew_not_found.png")
                 raise Exception("❌ 时间追加按钮未找到")
 
             screenshot(sb, "02_after_click.png")
 
-            # 处理 Turnstile（修复版）
-            if not solve_turnstile(sb):
-                raise Exception("❌ Turnstile 未通过")
+            # 如果触发 Cloudflare，开始处理
+            if is_cloudflare_page(sb) or not has_cf_clearance(sb):
+                print("⚠️ 检测到可能存在 Cloudflare 验证，开始绕过...")
+                if not solve_cloudflare(sb, timeout=240):
+                    print_cookies(sb)
+                    raise Exception("❌ Cloudflare / Turnstile 未通过")
 
-            screenshot(sb, "03_turnstile_passed.png")
+            screenshot(sb, "03_cf_passed.png")
 
-            # 等待页面完全加载/跳转
+            # 最终等待页面稳定
             human_sleep(6, 10)
 
-            # 最终确认页面不是 verify
-            if page_has_cloudflare_text(sb) and not has_cf_clearance(sb):
+            # 最终验证
+            if is_cloudflare_page(sb) and not has_cf_clearance(sb):
                 screenshot(sb, "04_still_verify.png")
-                raise Exception("❌ 仍停留在 Verify you are human，Cloudflare 未真正放行")
+                raise Exception("❌ 最终仍停留在 Verify you are human")
 
             screenshot(sb, "04_done.png")
+
+            print_cookies(sb)
             print("🎉 Weirdhost 自动续期完成")
 
     finally:
         if display:
             display.stop()
+
 
 if __name__ == "__main__":
     main()
