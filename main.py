@@ -87,32 +87,29 @@ def wait_cf_pass(sb, timeout=120):
 # =========================
 def click_time_add(sb):
     print("🖱️ 尝试点击 시간 추가 按钮")
-    scroll_container(sb)
+    # 先滚动
+    sb.execute_script("window.scrollTo(0, document.body.scrollHeight * 0.5)")
     sleep(1, 2)
-    try:
-        clicked = sb.execute_script("""
-        (() => {
-            const keys = ["시간 추가", "renew", "extend"];
-            for (const el of document.querySelectorAll("button, [role='button']")) {
-                const t = el.innerText || "";
-                if (keys.some(k => t.includes(k)) && el.offsetParent) {
-                    el.scrollIntoView({block:"center"});
-                    el.click();
-                    return true;
-                }
-            }
-            return false;
-        })();
-        """)
-        if clicked:
-            print("✅ 시간 추가 点击成功")
+
+    # XPath: button 内含 span 且文本包含 시간 추가
+    xpath_candidates = [
+        '//button[span[contains(text(), "시간 추가")]]',
+        '//button[contains(text(), "시간 추가")]'
+    ]
+
+    for xp in xpath_candidates:
+        try:
+            sb.wait_for_element_visible(xp, timeout=8)
+            sb.scroll_to(xp)
+            sleep(0.5, 1.0)
+            sb.click(xp)
+            print(f"✅ 点击成功: {xp}")
             return True
-        else:
-            print("❌ 시간 추가 未找到")
-            return False
-    except Exception as e:
-        print("⚠️ 点击失败:", e)
-        return False
+        except Exception:
+            continue
+
+    print("❌ 시간 추가 按钮未找到")
+    return False
 
 # =========================
 # NEXT / 다음
