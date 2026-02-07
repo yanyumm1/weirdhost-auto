@@ -385,9 +385,9 @@ def main():
             page_load_strategy="normal",  # 页面加载策略
         ) as sb:
             
-            # 设置超时（通过SeleniumBase方法）
-            sb.set_page_load_timeout(60)
-            sb.set_script_timeout(60)
+            # 设置超时（通过SeleniumBase的driver对象）
+            sb.driver.set_page_load_timeout(60)
+            sb.driver.set_script_timeout(60)
             
             # 1. 访问首页建立会话
             print("🌐 Visiting hub.weirdhost.xyz to establish session...")
