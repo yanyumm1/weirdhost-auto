@@ -3,23 +3,21 @@ import time
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 
+def ensure_screenshot_dir():
+    os.makedirs("screenshots", exist_ok=True)
+
+
 def wait_for_turnstile(page, timeout=60000):
-    """
-    等待 Cloudflare Turnstile 验证完成
-    """
     print("检测是否出现 Cloudflare Turnstile 验证...")
 
     try:
-        # 等待 Turnstile iframe 出现（如果存在）
         page.wait_for_selector('iframe[src*="turnstile"]', timeout=10000)
         print("检测到 Turnstile 小组件，等待验证通过...")
-
     except PlaywrightTimeoutError:
         print("未检测到 Turnstile，可能无需验证。")
         return True
 
     try:
-        # 等待 token 生成
         page.wait_for_function("""
             () => {
                 const input = document.querySelector('input[name="cf-turnstile-response"]');
@@ -32,19 +30,17 @@ def wait_for_turnstile(page, timeout=60000):
 
     except PlaywrightTimeoutError:
         print("❌ Turnstile 验证超时")
-        page.screenshot(path="turnstile_timeout.png")
+        page.screenshot(path="screenshots/turnstile_timeout.png")
         return False
 
 
-def add_server_time(server_url="https://hub.weirdhost.xyz/server/a79a2b26"):
+def add_server_time(server_url="https://hub.weirdhost.xyz/server/a36fc168"):
+
+    ensure_screenshot_dir()
 
     remember_web_cookie = os.environ.get('REMEMBER_WEB_COOKIE')
     pterodactyl_email = os.environ.get('PTERODACTYL_EMAIL')
     pterodactyl_password = os.environ.get('PTERODACTYL_PASSWORD')
-
-    if not (remember_web_cookie or (pterodactyl_email and pterodactyl_password)):
-        print("错误: 缺少登录凭据")
-        return False
 
     with sync_playwright() as p:
 
@@ -69,7 +65,7 @@ def add_server_time(server_url="https://hub.weirdhost.xyz/server/a79a2b26"):
                 }
 
                 page.context.add_cookies([session_cookie])
-                page.goto(server_url, wait_until="domcontentloaded")
+                page.goto(server_url)
 
                 if "login" in page.url:
                     print("Cookie 失效")
@@ -98,6 +94,9 @@ def add_server_time(server_url="https://hub.weirdhost.xyz/server/a79a2b26"):
             if page.url != server_url:
                 page.goto(server_url)
 
+            # ===== 点击前截图 =====
+            page.screenshot(path="screenshots/before_click.png", full_page=True)
+
             # ===== 点击 시간 추가 =====
             print("查找 '시간 추가' 按钮")
 
@@ -107,12 +106,18 @@ def add_server_time(server_url="https://hub.weirdhost.xyz/server/a79a2b26"):
 
             print("已点击时间追加按钮")
 
+            time.sleep(2)
+            page.screenshot(path="screenshots/after_click.png", full_page=True)
+
             # ===== 等待 Turnstile =====
             if not wait_for_turnstile(page):
                 return False
 
             # 等服务器处理
-            time.sleep(5)
+            time.sleep(8)
+
+            # ===== 最终截图 =====
+            page.screenshot(path="screenshots/final_result.png", full_page=True)
 
             print("🎉 时间追加流程完成")
             browser.close()
@@ -120,7 +125,7 @@ def add_server_time(server_url="https://hub.weirdhost.xyz/server/a79a2b26"):
 
         except Exception as e:
             print(f"未知错误: {e}")
-            page.screenshot(path="general_error.png")
+            page.screenshot(path="screenshots/general_error.png")
             browser.close()
             return False
 
