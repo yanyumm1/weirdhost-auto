@@ -1,7 +1,9 @@
 import os
 import time
 import random
+import platform
 from seleniumbase import SB
+from pyvirtualdisplay import Display
 
 # =========================
 # 环境变量
@@ -12,13 +14,14 @@ SERVER_URL = os.environ.get("WEIRDHOST_SERVER_URL")
 # =========================
 # 截图目录
 # =========================
-os.makedirs("screenshots", exist_ok=True)
+SCREENSHOT_DIR = "screenshots"
+os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
 # =========================
 # 工具函数
 # =========================
 def screenshot(sb, name):
-    path = f"screenshots/{name}"
+    path = f"{SCREENSHOT_DIR}/{name}"
     try:
         sb.save_screenshot(path)
         print(f"📸 Screenshot saved: {path}")
@@ -57,6 +60,18 @@ def remove_ads(sb):
         pass
 
 # =========================
+# Xvfb 支持（Linux） 
+# =========================
+def setup_xvfb():
+    if platform.system().lower() == "linux" and not os.environ.get("DISPLAY"):
+        display = Display(visible=False, size=(1920, 1080))
+        display.start()
+        os.environ["DISPLAY"] = display.new_display_var
+        print("🖥️ Xvfb 已启动")
+        return display
+    return None
+
+# =========================
 # Renew / 시간 추가
 # =========================
 def click_time_add(sb):
@@ -86,7 +101,7 @@ def solve_turnstile(sb, timeout=120):
 
     while time.time() - start < timeout:
         try:
-            # 已经有 CF cookie
+            # 已有 CF cookie
             cookies = sb.get_cookies()
             if any(c["name"] in ("cf_clearance", "__cf_bm") for c in cookies):
                 print("✅ CF Cookie 已存在，Turnstile 放行")
@@ -105,7 +120,7 @@ def solve_turnstile(sb, timeout=120):
                 print("✅ Turnstile iframe 已释放")
                 return True
 
-            # 尝试 UC 点击勾选
+            # UC 点击尝试
             try:
                 sb.uc_gui_click_captcha()
                 print("🖱️ 尝试点击 Turnstile 勾选")
@@ -170,67 +185,73 @@ def click_next_button(sb):
 # 主流程
 # =========================
 def main():
-    print("🚀 Weirdhost 自动续期（最终稳定版）")
+    print("🚀 Weirdhost 自动续期（UC + Xvfb + Turnstile）")
 
     if not SERVER_URL:
         raise Exception("❌ WEIRDHOST_SERVER_URL 未设置")
 
-    with SB(
-        uc=True,
-        locale="en",
-        headless=False,
-        chromium_arg="--window-size=1920,1080"
-    ) as sb:
+    display = setup_xvfb()
+    try:
+        with SB(
+            uc=True,
+            locale="en",
+            headless=False,
+            chromium_arg="--window-size=1920,1080"
+        ) as sb:
 
-        # 打开 Weirdhost
-        sb.uc_open_with_reconnect("https://hub.weirdhost.xyz", reconnect_time=5)
-        wait_react_loaded(sb)
-
-        # Cookie 登录
-        if REMEMBER_WEB_COOKIE:
-            print("🍪 注入 Cookie 登录")
-            sb.add_cookie({
-                "name": "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d",
-                "value": REMEMBER_WEB_COOKIE,
-                "domain": "hub.weirdhost.xyz",
-                "path": "/",
-                "secure": True,
-                "httpOnly": True,
-            })
-            sb.refresh()
+            # 打开 Weirdhost 首页
+            sb.uc_open_with_reconnect("https://hub.weirdhost.xyz", reconnect_time=5)
             wait_react_loaded(sb)
 
-        # 打开服务器页面
-        print(f"📦 打开服务器页面: {SERVER_URL}")
-        sb.uc_open_with_reconnect(SERVER_URL, reconnect_time=5)
-        wait_react_loaded(sb)
-        remove_ads(sb)
-        human_scroll(sb)
-        screenshot(sb, "01_server_page.png")
+            # Cookie 登录
+            if REMEMBER_WEB_COOKIE:
+                print("🍪 注入 Cookie 登录")
+                sb.add_cookie({
+                    "name": "remember_web_59ba36addc2b2f9401580f014c7f58ea4e30989d",
+                    "value": REMEMBER_WEB_COOKIE,
+                    "domain": "hub.weirdhost.xyz",
+                    "path": "/",
+                    "secure": True,
+                    "httpOnly": True,
+                })
+                sb.refresh()
+                wait_react_loaded(sb)
 
-        # 点击 시간 추가
-        if not click_time_add(sb):
-            screenshot(sb, "renew_not_found.png")
-            raise Exception("❌ 时间追加按钮未找到")
-        screenshot(sb, "02_after_first_click.png")
+            # 打开服务器页面
+            print(f"📦 打开服务器页面: {SERVER_URL}")
+            sb.uc_open_with_reconnect(SERVER_URL, reconnect_time=5)
+            wait_react_loaded(sb)
+            remove_ads(sb)
+            human_scroll(sb)
+            screenshot(sb, "01_server_page.png")
 
-        # 处理 CF Turnstile
-        if not solve_turnstile(sb):
-            screenshot(sb, "cf_failed.png")
-            raise Exception("❌ Cloudflare 未通过")
-        screenshot(sb, "03_cf_passed.png")
+            # 点击 시간 추가
+            if not click_time_add(sb):
+                screenshot(sb, "renew_not_found.png")
+                raise Exception("❌ 时间追加按钮未找到")
+            screenshot(sb, "02_after_first_click.png")
 
-        # 点击 NEXT / 다음
-        if not wait_next_button(sb):
-            screenshot(sb, "no_next.png")
-            raise Exception("❌ NEXT 未出现")
-        if not click_next_button(sb):
-            screenshot(sb, "next_click_fail.png")
-            raise Exception("❌ NEXT 点击失败")
-        human_sleep(6, 10)
-        screenshot(sb, "04_done.png")
+            # 处理 CF Turnstile
+            if not solve_turnstile(sb):
+                screenshot(sb, "cf_failed.png")
+                raise Exception("❌ Cloudflare 未通过")
+            screenshot(sb, "03_cf_passed.png")
 
-        print("🎉 Weirdhost 自动续期完成")
+            # 点击 NEXT / 다음
+            if not wait_next_button(sb):
+                screenshot(sb, "no_next.png")
+                raise Exception("❌ NEXT 未出现")
+            if not click_next_button(sb):
+                screenshot(sb, "next_click_fail.png")
+                raise Exception("❌ NEXT 点击失败")
+            human_sleep(6, 10)
+            screenshot(sb, "04_done.png")
+
+            print("🎉 Weirdhost 自动续期完成")
+
+    finally:
+        if display:
+            display.stop()
 
 if __name__ == "__main__":
     main()
