@@ -183,20 +183,23 @@ def main():
             screenshot(sb, "02_after_click.png")
 
             # -------------------------------
-            # 等待弹窗 / challenge 放行
+            # 尝试 Turnstile / Cloudflare 验证
             # -------------------------------
-            print("⏳ 等待弹窗 Cloudflare challenge 放行...")
-            # 假设弹窗类名包含 renew-popup
             try:
-                sb.wait_for_element_visible("//div[contains(@class,'renew-popup')]", timeout=10)
-                human_sleep(1,2)
-            except Exception:
-                print("⚠️ 弹窗未出现，可能已自动跳过")
+                sb.uc_gui_click_captcha()
+                human_sleep(3, 4)
+                print("✅ Turnstile 验证尝试完成")
+            except Exception as e:
+                print(f"⚠️ Turnstile 点击异常: {e}")
 
-            if not _wait_cloudflare_pass(sb, timeout=60):
-                print("⚠️ 弹窗 Cloudflare challenge 超时")
+            # -------------------------------
+            # 等待 Cloudflare 放行
+            # -------------------------------
+            print("⏳ 等待 Cloudflare 放行 / cf_clearance...")
+            if not _wait_cloudflare_pass(sb, timeout=TIMEOUT_WAIT_CF):
+                print("⚠️ Cloudflare challenge 超时")
             else:
-                print("✅ 弹窗 Cloudflare 已放行 / cf_clearance OK")
+                print("✅ Cloudflare 放行 / cf_clearance OK")
 
             # -------------------------------
             # 完成截图
@@ -207,6 +210,7 @@ def main():
     finally:
         if display:
             display.stop()
+
 
 if __name__ == "__main__":
     main()
