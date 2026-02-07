@@ -1,9 +1,17 @@
 name: Weirdhost Auto Renew
 
 on:
+  # ⏰ 定时运行
   schedule:
     - cron: "10 18 * * *"
+
+  # ▶️ 手动运行
   workflow_dispatch:
+
+  # 🔄 main.py 变更自动运行
+  push:
+    paths:
+      - "main.py"
 
 jobs:
   renew:
@@ -19,7 +27,7 @@ jobs:
         with:
           python-version: "3.10"
 
-      # -------- 修复字体乱码 --------
+      # -------- 修复字体 / GUI 依赖 --------
       - name: 🖥️ Install system dependencies
         run: |
           sudo apt-get update
