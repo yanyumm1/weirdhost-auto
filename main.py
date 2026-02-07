@@ -276,7 +276,7 @@ def wait_turnstile_pass(sb: SB, timeout: int = TIMEOUT_WAIT_CF) -> bool:
         
         # 检查 iframe 是否消失
         iframe_visible = False
-        for selector in [TURNSTIRE_IFRAME_SELECTOR] + ALTERNATE_SELECTORS:
+        for selector in [TURNSTILE_IFRAME_SELECTOR] + ALTERNATE_SELECTORS:
             if sb.is_element_visible(selector):
                 iframe_visible = True
                 break
@@ -351,22 +351,43 @@ def main():
             '--disable-web-security',
             '--allow-running-insecure-content',
             '--disable-notifications',
+            '--disable-popup-blocking',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding',
+            '--disable-background-timer-throttling',
+            '--disable-client-side-phishing-detection',
+            '--disable-component-update',
+            '--disable-domain-reliability',
+            '--disable-features=AudioServiceOutOfProcess',
+            '--disable-hang-monitor',
+            '--disable-ipc-flooding-protection',
+            '--disable-breakpad',
+            '--disable-crash-reporter',
+            '--metrics-recording-only',
+            '--no-first-run',
+            '--safebrowsing-disable-auto-update',
+            '--password-store=basic',
+            '--use-mock-keychain',
         ]
         
         with SB(
             uc=True,
             headless2=True,  # 使用headless2模式（更好的兼容性）
-            locale="en-US,en",
+            locale_code="en-US",
             agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            protocol="http",
+            wire=True,
             chromium_arg=' '.join(chrome_args),
             disable_csp=True,
             do_not_track=True,
-            skip_js_waits=False,
-            timeout=30,
+            skip_js_waits=False,  # 改为False，确保页面加载完成
+            undetectable=True,    # 添加反检测
+            page_load_strategy="normal",  # 页面加载策略
         ) as sb:
             
-            # 设置超时
-            sb.set_timeout(30)
+            # 设置超时（通过SeleniumBase方法）
+            sb.set_page_load_timeout(60)
+            sb.set_script_timeout(60)
             
             # 1. 访问首页建立会话
             print("🌐 Visiting hub.weirdhost.xyz to establish session...")
@@ -492,8 +513,6 @@ def main():
     except Exception as e:
         print(f"❌ Error occurred: {str(e)}")
         print(f"🔍 Traceback: {traceback.format_exc()}")
-        if 'sb' in locals():
-            screenshot(sb, "error_final.png")
         raise
     
     finally:
